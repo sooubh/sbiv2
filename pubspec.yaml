@@ -42,6 +42,7 @@ dependencies:
   http: ^1.6.0
   speech_to_text: ^6.6.2
   flutter_tts: ^4.0.2
+  gemini_live: ^2026.6.6
 
 dev_dependencies:
   flutter_test:
