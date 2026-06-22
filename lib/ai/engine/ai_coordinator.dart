@@ -366,20 +366,21 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
     if (isOnboarding) {
       return """
 You are the YONO SBI 2.0 Onboarding Agent, a guided conversational AI assistant.
-Your ONLY goal is to help Rohan complete KYC and activate UPI.
-Current KYC Step in memory: ${memory.kycStep}
-
-KYC sequential flow:
-1. PAN verification: Ask the user to verify PAN. Call `start_kyc(step: "pan", user_confirmed: true)` when they say they want to proceed.
-2. Aadhaar verification: Ask the user to verify Aadhaar. Call `start_kyc(step: "aadhaar", user_confirmed: true)` when they say they want to proceed.
-3. Video KYC: Ask the user to verify via Video KYC. Call `start_kyc(step: "video_kyc", user_confirmed: true)` when they say they want to proceed.
-4. UPI activation: Call `activate_upi(vpa: "rohan@sbi")` to enable UPI.
+Your ONLY goal is to help Rohan complete account opening onboarding.
+The onboarding flow has 7 steps:
+1. Full Name: Ask the user for their full name. Acknowledge it when provided.
+2. Mobile Number: Ask the user for their 10-digit mobile number.
+3. PAN Verification: Ask for their 10-character PAN number. When provided, call `start_kyc(step: "pan", user_confirmed: true)`.
+4. Aadhaar Verification: Ask for their 12-digit Aadhaar number. When provided, call `start_kyc(step: "aadhaar", user_confirmed: true)`.
+5. Permanent Address: Ask for their permanent address.
+6. Video KYC: Ask them to start Video KYC. Call `start_kyc(step: "video_kyc", user_confirmed: true)` when they agree.
+7. UPI Activation: Ask them to configure their VPA. Call `activate_upi(vpa: "preferred_vpa")` to complete.
 
 BEHAVIOR RULES:
 - Ask short, guided questions. Do not ask for multiple things at once.
 - Advance exactly one step at a time.
-- If KYC is complete, congratulate the user. You will then automatically hand off to the banking agent.
-- Explain briefly in Hinglish/English what tool you are calling before calling it.
+- If onboarding is complete, congratulate the user and instruct them to proceed to banking.
+- Speak in a friendly Hinglish/English blend.
 """;
     } else {
       String signalContext = signals.summaryForAgent;
@@ -669,37 +670,35 @@ BEHAVIOR RULES:
 
     if (isOnboarding) {
       // Rohan Onboarding Chat Simulation
-      if (profile.incomeBracket.isEmpty) {
-        agentInitialText = "Namaste Rohan! Aayein aapka SBI savings account setup process start karte hain. Lead qualify kar raha hun.";
-        triggerTool = "qualify_lead";
-        toolArgs = {
-          'income_bracket': '5-10 Lakhs',
-          'banking_need': 'Savings & UPI',
-          'existing_bank': 'None',
-        };
-        agentFinalText = "Leads qualified! 🚀 Aap high-yield SBI Quick Savings profile ke liye eligible hain. Ab KYC verification initialize karenge. PAN check start karne ke liye 'verify PAN' type karein.";
+      if (profile.name.isEmpty) {
+        agentInitialText = "Aapka swagat hai! Let's start. Please enter your full name.";
+        agentFinalText = "Namaste Rohan! Name saved. Now please enter your 10-digit mobile number.";
+      } else if (profile.mobileNumber.isEmpty) {
+        agentInitialText = "Mobile number record status starting...";
+        agentFinalText = "Got your mobile number. Now please enter your 10-character PAN card number to initiate identity check.";
       } else if (profile.kycStep == 'none') {
         agentInitialText = "Understood. PAN Verification check initialise kar raha hun. API parameters fetch ho rahe hain...";
         triggerTool = "start_kyc";
         toolArgs = {'step': 'pan', 'user_confirmed': true};
-        agentFinalText = "PAN verified successfully! ✅ 25 SBI Coins earned. Aapka details authenticated hai. Next step, Aadhaar link setup verify karne ke liye 'verify aadhaar' type karein.";
+        agentFinalText = "PAN verified successfully! ✅ 25 SBI Coins earned. Next step, please enter your 12-digit Aadhaar number for secure verification.";
       } else if (profile.kycStep == 'pan') {
         agentInitialText = "Aadhaar secure verification loop starts... Checking links in background.";
         triggerTool = "start_kyc";
         toolArgs = {'step': 'aadhaar', 'user_confirmed': true};
-        agentFinalText = "Aadhaar link verified! ✅ 25 SBI Coins earned. Final KYC checks ke liye Video verification initialize karenge. 'verify video kyc' type karein.";
+        agentFinalText = "Aadhaar link verified! ✅ 25 SBI Coins earned. Now, please enter your permanent address.";
       } else if (profile.kycStep == 'aadhaar') {
+        agentInitialText = "Address validation started...";
+        agentFinalText = "Address saved. We are ready for Video KYC. Tap the button below to start camera facial checks.";
+      } else if (profile.kycStep == 'video_kyc') {
         agentInitialText = "Opening secure Video KYC session interface... Agent online.";
         triggerTool = "start_kyc";
         toolArgs = {'step': 'video_kyc', 'user_confirmed': true};
-        agentFinalText = "Video KYC verification completed! 🎉 50 SBI Coins awarded. Your SBI account is now fully active. UPI payment profile setup karne ke liye 'activate upi' type karein.";
-      } else if (profile.kycStep == 'video_kyc') {
+        agentFinalText = "Video KYC verification completed! 🎉 50 SBI Coins awarded. Finally, let's setup your UPI VPA to enable digital payments. Enter your preferred VPA (e.g. name@sbi).";
+      } else {
         agentInitialText = "Activating UPI quick pay protocol... Allocating primary VPA rohan@sbi.";
         triggerTool = "activate_upi";
         toolArgs = {'vpa': 'rohan@sbi'};
-        agentFinalText = "UPI set up complete! ✅ VPA: rohan@sbi is active. 30 SBI Coins earned. Aapka SBI profile ready hai. Balance: ₹5,000. Kya main money transfer execute karu?";
-      } else {
-        agentInitialText = "Aapka KYC and UPI setup completely ready hai! Pehla transaction execute karein ya products check karein?";
+        agentFinalText = "UPI set up complete! ✅ VPA: rohan@sbi is active. 30 SBI Coins earned. Welcome to YONO SBI 2.0. You are ready to enter Banking Mode!";
       }
     } else {
       // Sourabh / General Banking Assistant Chat Simulation

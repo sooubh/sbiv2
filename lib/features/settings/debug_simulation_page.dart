@@ -11,6 +11,7 @@ import 'package:sbiv2/features/agent/models/timeline_entry.dart';
 import 'package:sbiv2/data/models/models.dart';
 import 'package:sbiv2/ai/voice/voice_service.dart';
 import 'package:sbiv2/ai/voice/voice_state.dart';
+import 'package:sbiv2/features/navigation/bottom_nav_shell.dart';
 
 class DebugSimulationPage extends ConsumerWidget {
   const DebugSimulationPage({super.key});
@@ -259,9 +260,15 @@ class DebugSimulationPage extends ConsumerWidget {
   }
 
   // Action 6: Complete KYC
-  void _completeKYC(WidgetRef ref) {
+  void _completeKYC(WidgetRef ref, BuildContext context) {
     // 1. Force onboarding completion in user profile
-    ref.read(userProfileProvider.notifier).updateKYCStep('complete');
+    ref.read(userProfileProvider.notifier).updateProfile(
+      ref.read(userProfileProvider).copyWith(
+        kycComplete: true,
+        kycStep: 'complete',
+        upiEnabled: true,
+      ),
+    );
 
     // 2. Force onboarding completion in agent memory
     ref.read(agentMemoryProvider.notifier).setKYCCompleted();
@@ -287,12 +294,22 @@ class DebugSimulationPage extends ConsumerWidget {
     ref.read(aiCoordinatorProvider.notifier).simulateAgentResponse(
       "Onboarding aur KYC complete ho gaya hai! YONO SBI 2.0 Banking assistant active hai. Main aapke investments and savings analyze karne ke liye ready hun."
     );
+
+    // Redirect to banking shell
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (context) => const BottomNavShell()),
+      (route) => false,
+    );
   }
 
   // Action 7: Activate UPI
-  void _activateUPI(WidgetRef ref) {
+  void _activateUPI(WidgetRef ref, BuildContext context) {
     // 1. Force UPI activation
     ref.read(userProfileProvider.notifier).enableUPI(true);
+    ref.read(userProfileProvider.notifier).updateKYCStep('complete');
+    ref.read(agentStateProvider.notifier).setMode(AgentMode.banking);
+    ref.read(agentMemoryProvider.notifier).setKYCCompleted();
 
     // 2. Emit event
     ref.read(agentEventProvider.notifier).emit(
@@ -311,6 +328,13 @@ class DebugSimulationPage extends ConsumerWidget {
     // 4. Speak and show agent response
     ref.read(aiCoordinatorProvider.notifier).simulateAgentResponse(
       "Congratulations! Aapka VPA rohan@sbi activate ho gaya hai. Aap kisi bhi UPI transaction ke liye use kar sakte hain."
+    );
+
+    // Redirect to banking shell
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (context) => const BottomNavShell()),
+      (route) => false,
     );
   }
 
@@ -441,6 +465,79 @@ class DebugSimulationPage extends ConsumerWidget {
             ),
           ),
 
+          // Collapsible Telemetry / Debug Diagnostics Card
+          Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: Card(
+              margin: const EdgeInsets.only(bottom: 24),
+              child: ExpansionTile(
+                tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+                title: Row(
+                  children: [
+                    const Icon(Icons.settings_suggest, color: AppTheme.primary, size: 20),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Diagnostics & Telemetry',
+                      style: GoogleFonts.poppins(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: Builder(
+                      builder: (context) {
+                        final agentState = ref.watch(agentStateProvider);
+                        final voiceState = ref.watch(voiceStateProvider);
+                        final aiState = ref.watch(aiCoordinatorProvider);
+                        final memory = ref.watch(agentMemoryProvider);
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Divider(height: 16),
+                            _buildTelemetryRow('Connection ID', 'sbi_session_73c2'),
+                            _buildTelemetryRow('Response Latency', aiState.isThinking ? 'Calculating...' : '820ms'),
+                            _buildTelemetryRow('Connection Status', agentState.connectionStatus.toUpperCase()),
+                            _buildTelemetryRow('Agent mode', agentState.mode.name.toUpperCase()),
+                            _buildTelemetryRow('Agent State', agentState.status.name.toUpperCase()),
+                            _buildTelemetryRow('Voice engine status', voiceState.status.name.toUpperCase()),
+                            _buildTelemetryRow('Last Tool called', agentState.lastToolName ?? 'None'),
+                            _buildTelemetryRow('Last error message', agentState.lastError ?? 'None'),
+                            const SizedBox(height: 12),
+                            Text(
+                              'Memory Summary:',
+                              style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                            ),
+                            const SizedBox(height: 4),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: AppTheme.background,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                '• Primary Goal: ${memory.primaryGoal}\n'
+                                '• Risk Level: ${memory.riskLevel}\n'
+                                '• Preferences: ${memory.userPreferenceSummary}',
+                                style: AppTheme.monoStyle(fontSize: 10, color: AppTheme.textSecondary),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
           // Simulation options title
           Text(
             'AVAILABLE DEMO TRIGGERS',
@@ -504,7 +601,7 @@ class DebugSimulationPage extends ConsumerWidget {
             description: 'Simulates video KYC success, marks Rohan onboarding complete, and transitions agent mode to banking.',
             icon: Icons.assignment_turned_in_outlined,
             color: Colors.blue,
-            onPressed: () => _completeKYC(ref),
+            onPressed: () => _completeKYC(ref, context),
           ),
 
           // 7. Activate UPI
@@ -513,7 +610,7 @@ class DebugSimulationPage extends ConsumerWidget {
             description: 'Activates UPI services for Rohan, registers virtual address rohan@sbi, and triggers success prompt.',
             icon: Icons.qr_code_scanner_outlined,
             color: Colors.teal,
-            onPressed: () => _activateUPI(ref),
+            onPressed: () => _activateUPI(ref, context),
           ),
 
           // 8. Create Savings Goal
@@ -609,6 +706,25 @@ class DebugSimulationPage extends ConsumerWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildTelemetryRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: GoogleFonts.inter(fontSize: 12, color: AppTheme.textSecondary),
+          ),
+          Text(
+            value,
+            style: AppTheme.monoStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+          ),
+        ],
       ),
     );
   }

@@ -8,6 +8,8 @@ class UserProfile {
   final String bankingNeed;
   final String existingBank;
   final int healthScore;
+  final String mobileNumber;
+  final String address;
 
   UserProfile({
     required this.name,
@@ -19,6 +21,8 @@ class UserProfile {
     required this.bankingNeed,
     required this.existingBank,
     required this.healthScore,
+    this.mobileNumber = '',
+    this.address = '',
   });
 
   UserProfile copyWith({
@@ -31,6 +35,8 @@ class UserProfile {
     String? bankingNeed,
     String? existingBank,
     int? healthScore,
+    String? mobileNumber,
+    String? address,
   }) {
     return UserProfile(
       name: name ?? this.name,
@@ -42,6 +48,8 @@ class UserProfile {
       bankingNeed: bankingNeed ?? this.bankingNeed,
       existingBank: existingBank ?? this.existingBank,
       healthScore: healthScore ?? this.healthScore,
+      mobileNumber: mobileNumber ?? this.mobileNumber,
+      address: address ?? this.address,
     );
   }
 
@@ -56,6 +64,8 @@ class UserProfile {
       'bankingNeed': bankingNeed,
       'existingBank': existingBank,
       'healthScore': healthScore,
+      'mobileNumber': mobileNumber,
+      'address': address,
     };
   }
 
@@ -70,6 +80,8 @@ class UserProfile {
       bankingNeed: json['bankingNeed'] ?? '',
       existingBank: json['existingBank'] ?? '',
       healthScore: json['healthScore'] ?? 75,
+      mobileNumber: json['mobileNumber'] ?? '',
+      address: json['address'] ?? '',
     );
   }
 }

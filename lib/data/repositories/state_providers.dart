@@ -46,6 +46,9 @@ class ProfileTypeNotifier extends StateNotifier<String> {
   }
 }
 
+// Track PIN login status for the existing customer (Sourabh)
+final isLoggedInProvider = StateProvider<bool>((ref) => false);
+
 // User Profile Notifier
 final userProfileProvider = StateNotifierProvider<UserProfileNotifier, UserProfile>((ref) {
   final profileType = ref.watch(profileTypeProvider);
@@ -109,6 +112,38 @@ class UserProfileNotifier extends StateNotifier<UserProfile> {
       bankingNeed: bankingNeed,
       existingBank: existingBank,
     );
+    saveProfile();
+  }
+
+  void clearForOnboarding() {
+    state = UserProfile(
+      name: '',
+      balance: 5000.0,
+      kycComplete: false,
+      kycStep: 'none',
+      upiEnabled: false,
+      incomeBracket: '0-5 Lakhs',
+      bankingNeed: 'Savings & UPI',
+      existingBank: 'None',
+      healthScore: 40,
+      mobileNumber: '',
+      address: '',
+    );
+    saveProfile();
+  }
+
+  void updateName(String name) {
+    state = state.copyWith(name: name);
+    saveProfile();
+  }
+
+  void updateMobileNumber(String mobileNumber) {
+    state = state.copyWith(mobileNumber: mobileNumber);
+    saveProfile();
+  }
+
+  void updateAddress(String address) {
+    state = state.copyWith(address: address);
     saveProfile();
   }
 

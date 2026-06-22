@@ -34,7 +34,7 @@ class HomeScreen extends ConsumerWidget {
 
     if (profile.kycComplete == false) {
       agentInsightTitle = "KYC Onboarding Active";
-      agentInsightText = "Namaste Rohan! Click the 'KYC App' tab to finish Aadhaar/PAN verification & activate UPI.";
+      agentInsightText = "Welcome Rohan! Please complete your digital KYC and UPI setup.";
       agentInsightColor = AppTheme.accentOrange;
     } else if (signals.missedRecurring) {
       agentInsightTitle = "Missed SIP Detected";
