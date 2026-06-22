@@ -140,7 +140,7 @@ class PatternEngine {
     if (alerts.isEmpty) {
       summary += "No critical financial anomalies detected. Overall financial health is stable.";
     } else {
-      summary += "Active Signals Detected:\n" + alerts.map((a) => "- $a").join("\n");
+      summary += "Active Signals Detected:\n${alerts.map((a) => "- $a").join("\n")}";
     }
 
     return PatternEngineSignals(

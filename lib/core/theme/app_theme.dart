@@ -23,7 +23,6 @@ class AppTheme {
         primary: primary,
         secondary: aiTeal,
         surface: surface,
-        background: background,
         error: accentOrange,
       ),
       textTheme: TextTheme(

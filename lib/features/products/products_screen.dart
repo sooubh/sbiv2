@@ -206,7 +206,7 @@ class ProductsScreen extends ConsumerWidget {
                           Text(
                             '${recommendedServices.length} customized products match your profile',
                             style: GoogleFonts.inter(
-                              color: Colors.white.withOpacity(0.9),
+                              color: Colors.white.withValues(alpha: 0.9),
                               fontSize: 11,
                             ),
                           ),
@@ -215,7 +215,7 @@ class ProductsScreen extends ConsumerWidget {
                     ),
                     TextButton(
                       style: TextButton.styleFrom(
-                        backgroundColor: Colors.white.withOpacity(0.2),
+                        backgroundColor: Colors.white.withValues(alpha: 0.2),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -315,7 +315,7 @@ class ProductsScreen extends ConsumerWidget {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
-                      color: AppTheme.aiTeal.withOpacity(0.15),
+                      color: AppTheme.aiTeal.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(

@@ -49,7 +49,6 @@ class _EngagementScreenState extends ConsumerState<EngagementScreen> {
     final profile = ref.watch(userProfileProvider);
     final txs = ref.watch(transactionsProvider);
     final engagement = ref.watch(engagementProvider);
-    final goals = ref.watch(goalsProvider);
 
     // Run PatternEngine
     final signals = PatternEngine.analyze(profile, txs);
@@ -202,7 +201,7 @@ class _EngagementScreenState extends ConsumerState<EngagementScreen> {
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [
                   BoxShadow(
-                    color: AppTheme.aiTeal.withOpacity(0.2),
+                    color: AppTheme.aiTeal.withValues(alpha: 0.2),
                     blurRadius: 10,
                     offset: const Offset(0, 4),
                   ),
@@ -232,7 +231,7 @@ class _EngagementScreenState extends ConsumerState<EngagementScreen> {
                     aiStoryContent,
                     style: GoogleFonts.inter(
                       fontSize: 13,
-                      color: Colors.white.withOpacity(0.95),
+                      color: Colors.white.withValues(alpha: 0.95),
                       height: 1.5,
                     ),
                   ),
@@ -439,7 +438,7 @@ class _EngagementScreenState extends ConsumerState<EngagementScreen> {
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isDone ? AppTheme.accentGreen.withOpacity(0.3) : AppTheme.aiTeal.withOpacity(0.3),
+            color: isDone ? AppTheme.accentGreen.withValues(alpha: 0.3) : AppTheme.aiTeal.withValues(alpha: 0.3),
             width: 1.5,
           ),
         ),

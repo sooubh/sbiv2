@@ -107,7 +107,6 @@ class ToolDispatcher {
       case 'boost_goal_savings':
         final goalId = args['goal_id'] as String? ?? 'goal_01';
         final amount = (args['amount'] as num? ?? 100).toDouble();
-        final reason = args['reason'] as String? ?? 'Auto savings boost';
 
         final profile = ref.read(userProfileProvider);
         if (profile.balance < amount) {
@@ -142,7 +141,6 @@ class ToolDispatcher {
       case 'execute_transfer':
         final recipient = args['recipient'] as String? ?? 'Self';
         final amount = (args['amount'] as num? ?? 0).toDouble();
-        final reason = args['reason'] as String? ?? 'Transfer request';
 
         final profile = ref.read(userProfileProvider);
         if (profile.balance < amount) {
@@ -171,7 +169,6 @@ class ToolDispatcher {
 
       case 'suggest_service_activation':
         final serviceId = args['service_id'] as String? ?? 'srv_sip';
-        final reason = args['reason'] as String? ?? 'AI priority match';
 
         ref.read(servicesProvider.notifier).activateService(serviceId);
         ref.read(engagementProvider.notifier).addCoins(50);

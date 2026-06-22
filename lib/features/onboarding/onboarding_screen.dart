@@ -48,7 +48,6 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   Widget build(BuildContext context) {
     final profile = ref.watch(userProfileProvider);
     final messages = ref.watch(onboardingChatProvider);
-    final aiState = ref.watch(aiCoordinatorProvider);
     final profileType = ref.watch(profileTypeProvider);
 
     // If user is Sourabh (already onboarded), show a success page with redirect
@@ -68,7 +67,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: AppTheme.accentGreen.withOpacity(0.15),
+                      color: AppTheme.accentGreen.withValues(alpha: 0.15),
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(
@@ -150,7 +149,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           child: Row(
             children: [
               CircleAvatar(
-                backgroundColor: AppTheme.aiTeal.withOpacity(0.2),
+                backgroundColor: AppTheme.aiTeal.withValues(alpha: 0.2),
                 child: const Icon(Icons.support_agent, color: AppTheme.aiTeal),
               ),
               const SizedBox(width: 12),
@@ -302,9 +301,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       margin: const EdgeInsets.only(bottom: 12, top: 4),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: AppTheme.aiTeal.withOpacity(0.08),
+        color: AppTheme.aiTeal.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.aiTeal.withOpacity(0.2), width: 1),
+        border: Border.all(color: AppTheme.aiTeal.withValues(alpha: 0.2), width: 1),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -347,9 +346,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: AppTheme.accentGreen.withOpacity(0.08),
+        color: AppTheme.accentGreen.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.accentGreen.withOpacity(0.25), width: 1),
+        border: Border.all(color: AppTheme.accentGreen.withValues(alpha: 0.25), width: 1),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,

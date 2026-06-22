@@ -91,7 +91,6 @@ class _BottomNavShellState extends ConsumerState<BottomNavShell> {
   @override
   Widget build(BuildContext context) {
     final profileType = ref.watch(profileTypeProvider);
-    final profile = ref.watch(userProfileProvider);
     final aiState = ref.watch(aiCoordinatorProvider);
     final coins = ref.watch(engagementProvider).sbiCoins;
 
@@ -147,7 +146,7 @@ class _BottomNavShellState extends ConsumerState<BottomNavShell> {
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               margin: const EdgeInsets.only(right: 8),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.15),
+                color: Colors.white.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Row(
