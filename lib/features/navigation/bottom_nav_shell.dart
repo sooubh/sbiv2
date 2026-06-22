@@ -28,61 +28,298 @@ class _BottomNavShellState extends ConsumerState<BottomNavShell> {
     const AiChatScreen(),
   ];
 
-  void _showApiKeyDialog(BuildContext context) {
-    final apiKeyController = TextEditingController(text: ref.read(geminiApiKeyProvider));
-    showDialog(
+  void _switchProfile(WidgetRef ref, String val) {
+    ref.read(profileTypeProvider.notifier).setProfile(val);
+    ref.read(userProfileProvider.notifier).reset();
+    ref.read(transactionsProvider.notifier).reset();
+    ref.read(goalsProvider.notifier).reset();
+    ref.read(recommendationsProvider.notifier).reset();
+    ref.read(servicesProvider.notifier).reset();
+    ref.read(engagementProvider.notifier).reset();
+    ref.read(onboardingChatProvider.notifier).reset();
+    ref.read(bankingChatProvider.notifier).reset();
+  }
+
+  void _showSettingsSheet(BuildContext context) {
+    showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.background,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
       builder: (context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text(
-            'Gemini API Settings',
-            style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: AppTheme.primary),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Enter Gemini API Key to enable Live WebSockets & REST. Leave empty to use local high-fidelity AI simulation.',
-                style: GoogleFonts.inter(fontSize: 12, color: AppTheme.textSecondary),
+        return Consumer(
+          builder: (context, ref, child) {
+            final profileType = ref.watch(profileTypeProvider);
+            final apiKey = ref.watch(geminiApiKeyProvider);
+            final apiKeyController = TextEditingController(text: apiKey);
+
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 20,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
               ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: apiKeyController,
-                obscureText: true,
-                decoration: InputDecoration(
-                  labelText: 'API Key',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: AppTheme.primary, width: 2),
-                  ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: AppTheme.border,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        const Icon(Icons.settings, color: AppTheme.primary, size: 24),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Settings & Developer Console',
+                          style: GoogleFonts.poppins(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.textPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    
+                    // Profile Switcher Section
+                    Text(
+                      'Select Active Demo Profile',
+                      style: GoogleFonts.poppins(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        // Profile A card
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () {
+                              if (profileType != 'A') {
+                                _switchProfile(ref, 'A');
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Switched to Profile: Rohan (Naya Customer)'),
+                                    backgroundColor: AppTheme.primary,
+                                  ),
+                                );
+                              }
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: profileType == 'A' ? AppTheme.primary : AppTheme.border,
+                                  width: profileType == 'A' ? 2 : 1,
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        'Rohan',
+                                        style: GoogleFonts.poppins(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 14,
+                                          color: AppTheme.textPrimary,
+                                        ),
+                                      ),
+                                      if (profileType == 'A')
+                                        const Icon(Icons.check_circle, color: AppTheme.primary, size: 16),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Naya Customer\nBalance: ₹5,000\nKYC: Incomplete\nUPI: Inactive',
+                                    style: GoogleFonts.inter(fontSize: 11, color: AppTheme.textSecondary, height: 1.4),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        // Profile B card
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () {
+                              if (profileType != 'B') {
+                                _switchProfile(ref, 'B');
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Switched to Profile: Sourabh (Existing Customer)'),
+                                    backgroundColor: AppTheme.primary,
+                                  ),
+                                );
+                              }
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: profileType == 'B' ? AppTheme.primary : AppTheme.border,
+                                  width: profileType == 'B' ? 2 : 1,
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        'Sourabh',
+                                        style: GoogleFonts.poppins(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 14,
+                                          color: AppTheme.textPrimary,
+                                        ),
+                                      ),
+                                      if (profileType == 'B')
+                                        const Icon(Icons.check_circle, color: AppTheme.primary, size: 16),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Existing Customer\nBalance: ₹1,24,500\nKYC: Complete\nUPI: Active',
+                                    style: GoogleFonts.inter(fontSize: 11, color: AppTheme.textSecondary, height: 1.4),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                    
+                    // API Configuration Section
+                    Text(
+                      'Gemini API Settings',
+                      style: GoogleFonts.poppins(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: AppTheme.border),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Enter Gemini API Key to enable Live WebSockets & REST. Leave empty to use local high-fidelity AI simulation.',
+                            style: GoogleFonts.inter(fontSize: 11, color: AppTheme.textSecondary, height: 1.4),
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: apiKeyController,
+                            obscureText: true,
+                            decoration: InputDecoration(
+                              labelText: 'Gemini API Key',
+                              labelStyle: GoogleFonts.inter(fontSize: 12),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppTheme.primary,
+                                padding: const EdgeInsets.symmetric(vertical: 10),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              onPressed: () {
+                                ref.read(aiCoordinatorProvider.notifier).updateApiKey(apiKeyController.text.trim());
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(apiKeyController.text.isNotEmpty
+                                        ? 'API Key saved. Reconnecting...'
+                                        : 'Switched to local simulation mode.'),
+                                    backgroundColor: AppTheme.primary,
+                                  ),
+                                );
+                              },
+                              child: Text('Save Gemini API Config', style: GoogleFonts.inter(fontWeight: FontWeight.bold, color: Colors.white)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    
+                    // Reset Actions
+                    Text(
+                      'App Utilities',
+                      style: GoogleFonts.poppins(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.red,
+                          side: const BorderSide(color: Colors.red),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        icon: const Icon(Icons.refresh),
+                        label: Text('Reset App Demo Data', style: GoogleFonts.inter(fontWeight: FontWeight.bold)),
+                        onPressed: () {
+                          _switchProfile(ref, profileType);
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Demo data has been reset to default mock values.'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                  ],
                 ),
               ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel', style: TextStyle(color: AppTheme.textSecondary)),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                ref.read(aiCoordinatorProvider.notifier).updateApiKey(apiKeyController.text.trim());
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(apiKeyController.text.isNotEmpty
-                        ? 'Gemini API Key updated. Reconnecting...'
-                        : 'Switched to simulated AI mode.'),
-                    backgroundColor: AppTheme.primary,
-                  ),
-                );
-              },
-              child: const Text('Save'),
-            ),
-          ],
+            );
+          },
         );
       },
     );
@@ -90,7 +327,6 @@ class _BottomNavShellState extends ConsumerState<BottomNavShell> {
 
   @override
   Widget build(BuildContext context) {
-    final profileType = ref.watch(profileTypeProvider);
     final aiState = ref.watch(aiCoordinatorProvider);
     final coins = ref.watch(engagementProvider).sbiCoins;
 
@@ -165,49 +401,11 @@ class _BottomNavShellState extends ConsumerState<BottomNavShell> {
               ),
             ),
           ),
-          // Profile Switcher (A/B)
-          DropdownButton<String>(
-            value: profileType,
-            dropdownColor: AppTheme.primaryDark,
-            underline: const SizedBox(),
-            icon: const Icon(Icons.switch_account, color: Colors.white),
-            items: const [
-              DropdownMenuItem(
-                value: 'A',
-                child: Text(' Rohan (Naya)  ', style: TextStyle(color: Colors.white, fontSize: 13)),
-              ),
-              DropdownMenuItem(
-                value: 'B',
-                child: Text(' Sourabh (Existing)  ', style: TextStyle(color: Colors.white, fontSize: 13)),
-              ),
-            ],
-            onChanged: (val) {
-              if (val != null) {
-                ref.read(profileTypeProvider.notifier).setProfile(val);
-                ref.read(userProfileProvider.notifier).reset();
-                ref.read(transactionsProvider.notifier).reset();
-                ref.read(goalsProvider.notifier).reset();
-                ref.read(recommendationsProvider.notifier).reset();
-                ref.read(servicesProvider.notifier).reset();
-                ref.read(engagementProvider.notifier).reset();
-                ref.read(onboardingChatProvider.notifier).reset();
-                ref.read(bankingChatProvider.notifier).reset();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Switched to profile: ${val == 'A' ? 'Rohan (New Customer)' : 'Sourabh (Existing Customer)'}'),
-                    backgroundColor: AppTheme.primary,
-                  ),
-                );
-              }
-            },
-          ),
-          // API Settings
+          
+          // Gear Settings Button
           IconButton(
-            icon: Icon(
-              Icons.vpn_key,
-              color: aiState.mode == AIServiceMode.simulated ? Colors.white70 : AppTheme.aiTeal,
-            ),
-            onPressed: () => _showApiKeyDialog(context),
+            icon: const Icon(Icons.settings, color: Colors.white),
+            onPressed: () => _showSettingsSheet(context),
           ),
         ],
       ),

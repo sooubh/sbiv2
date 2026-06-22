@@ -375,49 +375,54 @@ Keep your reasoning short and always explain why you are running a tool in chat.
 
   // High-fidelity local simulation mode when offline or no API Key
   Future<void> _sendSimulatedMessage(String text) async {
-    await Future.delayed(const Duration(milliseconds: 1500)); // Simulate thinking lag
+    await Future.delayed(const Duration(milliseconds: 800)); // Initial thinking delay
 
     final query = text.toLowerCase();
-    String reply = "";
+    String agentInitialText = "";
+    String agentFinalText = "";
     String? triggerTool;
     Map<String, dynamic> toolArgs = {};
 
     final profile = _ref.read(userProfileProvider);
+    final profileType = _ref.read(profileTypeProvider);
 
-    if (!profile.kycComplete && _ref.read(profileTypeProvider) == 'A') {
+    if (!profile.kycComplete && profileType == 'A') {
       // Rohan Onboarding Chat Simulation
       if (profile.incomeBracket.isEmpty) {
-        // Qualify lead
-        reply = "Aapka details note kar liya hai! Main SBI Quick Savings account open karne ke liye lead qualify kar raha hun.";
+        agentInitialText = "Namaste Rohan! Aayein aapka SBI savings account setup process start karte hain. Lead qualify kar raha hun.";
         triggerTool = "qualify_lead";
         toolArgs = {
           'income_bracket': '5-10 Lakhs',
           'banking_need': 'Savings & UPI',
           'existing_bank': 'None',
         };
+        agentFinalText = "Leads qualified! 🚀 Aap high-yield SBI Quick Savings profile ke liye eligible hain. Ab KYC verification initialize karenge. PAN check start karne ke liye 'verify PAN' type karein.";
       } else if (profile.kycStep == 'none') {
-        reply = "Aapke qualified details confirm ho gaye hain. Ab PAN verification start karte hain. Kya main verify karu?";
+        agentInitialText = "Understood. PAN Verification check initialise kar raha hun. API parameters fetch ho rahe hain...";
         triggerTool = "initiate_kyc_step";
         toolArgs = {'step': 'pan', 'user_confirmed': true};
+        agentFinalText = "PAN verified successfully! ✅ 25 SBI Coins earned. Aapka details authenticated hai. Next step, Aadhaar link setup verify karne ke liye 'verify aadhaar' type karein.";
       } else if (profile.kycStep == 'pan') {
-        reply = "PAN verify ho gaya hai! Next step Aadhaar link karne ka hai. Kya verification verify kar dein?";
+        agentInitialText = "Aadhaar secure verification loop starts... Checking links in background.";
         triggerTool = "initiate_kyc_step";
         toolArgs = {'step': 'aadhaar', 'user_confirmed': true};
+        agentFinalText = "Aadhaar link verified! ✅ 25 SBI Coins earned. Final KYC checks ke liye Video verification initialize karenge. 'verify video kyc' type karein.";
       } else if (profile.kycStep == 'aadhaar') {
-        reply = "Aadhaar authentication green ho gaya! Final KYC verification ke liye Video KYC start karte hain. Confirm kijiye.";
+        agentInitialText = "Opening secure Video KYC session interface... Agent online.";
         triggerTool = "initiate_kyc_step";
         toolArgs = {'step': 'video_kyc', 'user_confirmed': true};
+        agentFinalText = "Video KYC verification completed! 🎉 50 SBI Coins awarded. Your SBI account is now fully active. UPI payment profile setup karne ke liye 'activate upi' type karein.";
       } else if (profile.kycStep == 'video_kyc') {
-        reply = "KYC Complete! 🎉 Ab quick transfers ke liye UPI set karte hain. Preferred UPI ID rohan@sbi set kar dein?";
+        agentInitialText = "Activating UPI quick pay protocol... Allocating primary VPA rohan@sbi.";
         triggerTool = "activate_upi";
         toolArgs = {'vpa': 'rohan@sbi'};
+        agentFinalText = "UPI set up complete! ✅ VPA: rohan@sbi is active. 30 SBI Coins earned. Aapka SBI profile ready hai. Balance: ₹5,000. Kya main money transfer execute karu?";
       } else {
-        reply = "Aapka SBI account fully ready hai! Pehla transfer karein ya savings goals set up karein?";
+        agentInitialText = "Aapka KYC and UPI setup completely ready hai! Pehla transaction execute karein ya products check karein?";
       }
     } else {
       // Sourabh / General Banking Assistant Chat Simulation
       if (query.contains('send') || query.contains('bhej') || query.contains('transfer') || query.contains('pay')) {
-        // Extract amount and recipient
         double amount = 2000;
         String recipient = "Mom";
         final matchAmount = RegExp(r'\d+').firstMatch(query);
@@ -428,37 +433,85 @@ Keep your reasoning short and always explain why you are running a tool in chat.
           recipient = "Sourabh";
         }
 
-        reply = "Theek hai! ₹${amount.toStringAsFixed(0)} $recipient ko send karne ka request trigger kar raha hun.";
-        triggerTool = "execute_transfer";
-        toolArgs = {'recipient': recipient, 'amount': amount, 'reason': 'Direct Pay from AI Chat'};
+        if (profile.balance < amount) {
+          agentInitialText = "Checking account balance for ₹${amount.toStringAsFixed(0)} transfer to $recipient...";
+          agentFinalText = "Oops! Aapka balance ₹${profile.balance.toStringAsFixed(2)} insufficient hai. Transfer execute nahi kiya ja sakta.";
+        } else {
+          agentInitialText = "Theek hai! ₹${amount.toStringAsFixed(0)} $recipient ko send karne ka request process kar raha hun.";
+          triggerTool = "execute_transfer";
+          toolArgs = {'recipient': recipient, 'amount': amount, 'reason': 'Direct Pay from AI Chat'};
+          
+          final updatedBalance = profile.balance - amount;
+          agentFinalText = "Transfer complete! ✅ ₹${amount.toStringAsFixed(0)} successfully transferred to $recipient. Your updated balance is ₹${updatedBalance.toStringAsFixed(2)}.";
+        }
       } else if (query.contains('sip') || query.contains('mutual fund') || query.contains('invest')) {
-        reply = "June ka SIP resume karne ki priority recommendation compute ki hai. Bluechip fund SIP setup trigger karta hun.";
+        agentInitialText = "SIP missed check trigger. Main SBI Mutual Fund setup utility verify kar raha hun...";
         triggerTool = "suggest_service_activation";
         toolArgs = {'service_id': 'srv_sip', 'reason': 'Resume June SIP - AI Insight'};
+        agentFinalText = "June SBI Bluechip Mutual Fund SIP successfully restored! ✅ 50 SBI Coins awarded. Streak 🔥 status active.";
       } else if (query.contains('fd') || query.contains('fixed deposit') || query.contains('saving')) {
-        reply = "Idle cash buffer detect kiya hai. ₹50,000 SBI Tax Savings FD activate kar raha hun, returns 7.2% secure.";
-        triggerTool = "suggest_service_activation";
-        toolArgs = {'service_id': 'srv_fd', 'reason': 'Allocate idle balance to FD'};
+        const amount = 50000.0;
+        if (profile.balance < amount) {
+          agentInitialText = "Fixed Deposit opening request received. Inspecting idle balance buffers...";
+          agentFinalText = "Insufficient funds. Fixed Deposit start karne ke liye minimum ₹50,000 balance require hai.";
+        } else {
+          agentInitialText = "Idle balance detected. ₹50,000 savings account se Fixed Deposit account mein shift kar raha hun at 7.2% secure interest.";
+          triggerTool = "suggest_service_activation";
+          toolArgs = {'service_id': 'srv_fd', 'reason': 'Allocate idle balance to FD'};
+          
+          final updatedBalance = profile.balance - amount;
+          agentFinalText = "Fixed Deposit successfully initialized! ✅ ₹50,000 locked. 50 Coins earned. Remaining balance: ₹${updatedBalance.toStringAsFixed(2)}.";
+        }
       } else if (query.contains('goal') || query.contains('save') || query.contains('boost')) {
-        reply = "Dream Car goal boost kar raha hun with balance safety rules.";
-        triggerTool = "boost_goal_savings";
-        toolArgs = {'goal_id': 'goal_01', 'amount': 500, 'reason': 'AI Coach auto-boost'};
+        const amount = 500.0;
+        if (profile.balance < amount) {
+          agentInitialText = "Checking goal boost buffer...";
+          agentFinalText = "Insufficient balance. Goal boost execute nahi kiya ja sakta.";
+        } else {
+          agentInitialText = "Sure! ₹500 se Dream Car savings goal boost execute kar raha hun.";
+          triggerTool = "boost_goal_savings";
+          toolArgs = {'goal_id': 'goal_01', 'amount': amount, 'reason': 'AI Coach auto-boost'};
+          
+          final updatedBalance = profile.balance - amount;
+          agentFinalText = "Goal boosted! ✅ ₹500 successfully added to your Dream Car goal. 10 Coins earned. Remaining balance: ₹${updatedBalance.toStringAsFixed(2)}.";
+        }
       } else if (query.contains('balance') || query.contains('paisa') || query.contains('khata')) {
-        reply = "Aapka primary balance ₹${profile.balance.toStringAsFixed(2)} hai. Aapki savings account safe zone mein hai.";
+        agentInitialText = "Account profile checking in progress...";
+        agentFinalText = "Aapka savings account balance ₹${profile.balance.toStringAsFixed(2)} hai. Status: Safe zone.";
       } else if (query.contains('health') || query.contains('spending') || query.contains('story')) {
-        reply = "Aapka financial health score 82/100 hai! Ek anomaly check kiya gaya hai: Salary credit hone ke baad abhi tak Goal savings update nahi kiya hai. Goal boost ya FD set karne ki recommendation active hai.";
+        agentInitialText = "Analyzing financial statement records and streaks...";
+        agentFinalText = "Aapka Financial Health score: 82/100 (Safe). Detected anomaly: June MF SIP was missed. Suggestion: Tap 'Products' or type 'Resume SIP' to restore your SIP and secure active coins.";
       } else {
-        reply = "Main aapka statement analyze kar sakta hun, balance check, goal boost ya direct money transfer kar sakta hun. Kya trigger karun?";
+        agentInitialText = "Main aapka check balance details provide kar sakta hun, Fixed Deposit start kar sakta hun, Goal boost ya direct money transfer execute kar sakta hun. Kaise help karu?";
       }
     }
 
-    _addMessageToUI('agent', reply);
+    // Phase 1: Output agent's initial thoughts/intent
+    if (agentInitialText.isNotEmpty) {
+      _addMessageToUI('agent', agentInitialText);
+    }
 
+    // Phase 2: Execute simulated tool calling sequence
     if (triggerTool != null) {
+      await Future.delayed(const Duration(milliseconds: 600));
       _addMessageToUI('system', "Agent executing tool (simulated): $triggerTool...", toolCall: {'name': triggerTool, 'args': toolArgs});
+      
       await Future.delayed(const Duration(milliseconds: 1000));
       final output = await ToolDispatcher.dispatch(_ref, triggerTool, toolArgs);
+      
       _addMessageToUI('tool', "Agent completed $triggerTool ✅", toolCall: {'output': output});
+      
+      // Phase 3: Output final response reflecting the updated state
+      if (agentFinalText.isNotEmpty) {
+        await Future.delayed(const Duration(milliseconds: 600));
+        _addMessageToUI('agent', agentFinalText);
+      }
+    } else {
+      // Direct reply without tool execution
+      if (agentFinalText.isNotEmpty) {
+        await Future.delayed(const Duration(milliseconds: 400));
+        _addMessageToUI('agent', agentFinalText);
+      }
     }
 
     state = state.copyWith(isThinking: false);
