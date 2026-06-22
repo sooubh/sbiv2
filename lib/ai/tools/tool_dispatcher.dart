@@ -1,11 +1,15 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sbiv2/data/models/models.dart';
 import 'package:sbiv2/data/repositories/state_providers.dart';
+import 'package:sbiv2/ai/memory/agent_memory.dart';
 
 class ToolDispatcher {
   static Future<Map<String, dynamic>> dispatch(Ref ref, String name, Map<String, dynamic> args) async {
     // Artificial lag to make it feel "agentic" and visible
     await Future.delayed(const Duration(milliseconds: 800));
+
+    // Update agent memory with the last executed tool
+    ref.read(agentMemoryProvider.notifier).logToolExecution(name);
 
     switch (name) {
       case 'qualify_lead':
@@ -25,6 +29,7 @@ class ToolDispatcher {
           'existing_bank': existingBank,
         };
 
+      case 'start_kyc':
       case 'initiate_kyc_step':
         final step = args['step'] as String? ?? 'pan';
         final userConfirmed = args['user_confirmed'] as bool? ?? false;
@@ -35,15 +40,18 @@ class ToolDispatcher {
             nextStep = 'aadhaar';
             ref.read(userProfileProvider.notifier).updateKYCStep('pan');
             ref.read(engagementProvider.notifier).addCoins(25);
+            ref.read(agentMemoryProvider.notifier).updateKYCStep('pan');
           } else if (step == 'aadhaar') {
             nextStep = 'video_kyc';
             ref.read(userProfileProvider.notifier).updateKYCStep('aadhaar');
             ref.read(engagementProvider.notifier).addCoins(25);
+            ref.read(agentMemoryProvider.notifier).updateKYCStep('aadhaar');
           } else if (step == 'video_kyc') {
             nextStep = 'complete';
             ref.read(userProfileProvider.notifier).updateKYCStep('complete');
             ref.read(engagementProvider.notifier).addCoins(50);
             ref.read(engagementProvider.notifier).addAchievement('Full KYC Done');
+            ref.read(agentMemoryProvider.notifier).updateKYCStep('complete');
           }
           return {
             'status': 'success',
@@ -59,6 +67,7 @@ class ToolDispatcher {
         ref.read(userProfileProvider.notifier).enableUPI(true);
         ref.read(engagementProvider.notifier).addCoins(30);
         ref.read(engagementProvider.notifier).addAchievement('UPI Enabled');
+        ref.read(agentMemoryProvider.notifier).updateKYCStep('complete');
         return {
           'status': 'success',
           'upi_id': vpa,
@@ -84,12 +93,12 @@ class ToolDispatcher {
           'recommendation_id': recId,
         };
 
+      case 'log_insight':
       case 'log_spending_insight':
         final category = args['category'] as String? ?? 'General';
         final observation = args['observation'] as String? ?? 'Spending detected';
         final reason = args['reason'] as String? ?? 'Anomaly trigger';
 
-        // Add transaction alert or recommendation
         final rec = Recommendation(
           id: 'insight_${DateTime.now().millisecondsSinceEpoch}',
           title: 'Alert: $observation',
@@ -113,13 +122,9 @@ class ToolDispatcher {
           return {'status': 'failed', 'reason': 'Insufficient balance to boost goal'};
         }
 
-        // Deduct from profile balance
         ref.read(userProfileProvider.notifier).updateBalance(-amount);
-
-        // Add to goal savings
         ref.read(goalsProvider.notifier).boostGoal(goalId, amount);
 
-        // Log transaction
         final newTx = Transaction(
           id: 'tx_boost_${DateTime.now().millisecondsSinceEpoch}',
           amount: amount,
@@ -138,6 +143,7 @@ class ToolDispatcher {
           'coins_awarded': 10,
         };
 
+      case 'transfer_money':
       case 'execute_transfer':
         final recipient = args['recipient'] as String? ?? 'Self';
         final amount = (args['amount'] as num? ?? 0).toDouble();
@@ -147,10 +153,8 @@ class ToolDispatcher {
           return {'status': 'failed', 'reason': 'Insufficient balance to execute transfer'};
         }
 
-        // Deduct from profile balance
         ref.read(userProfileProvider.notifier).updateBalance(-amount);
 
-        // Create transaction
         final newTx = Transaction(
           id: 'tx_transfer_${DateTime.now().millisecondsSinceEpoch}',
           amount: amount,
@@ -165,6 +169,87 @@ class ToolDispatcher {
           'status': 'success',
           'recipient': recipient,
           'amount_transferred': amount,
+        };
+
+      case 'move_to_fd':
+        final amount = (args['amount'] as num? ?? 50000.0).toDouble();
+
+        final profile = ref.read(userProfileProvider);
+        if (profile.balance < amount) {
+          return {'status': 'failed', 'reason': 'Insufficient balance to open Fixed Deposit'};
+        }
+
+        ref.read(userProfileProvider.notifier).updateBalance(-amount);
+        ref.read(servicesProvider.notifier).activateService('srv_fd');
+        ref.read(engagementProvider.notifier).addCoins(50);
+        ref.read(engagementProvider.notifier).addAchievement('Fixed Deposit Opened');
+
+        final newTx = Transaction(
+          id: 'tx_fd_${DateTime.now().millisecondsSinceEpoch}',
+          amount: amount,
+          payee: 'SBI Fixed Deposit',
+          category: 'Investment',
+          date: DateTime.now(),
+          type: 'debit',
+        );
+        ref.read(transactionsProvider.notifier).addTransaction(newTx);
+
+        return {
+          'status': 'success',
+          'service_id': 'srv_fd',
+          'amount_locked': amount,
+          'coins_awarded': 50,
+        };
+
+      case 'resume_sip':
+        final profile = ref.read(userProfileProvider);
+        const amount = 5000.0;
+        if (profile.balance < amount) {
+          return {'status': 'failed', 'reason': 'Insufficient balance to resume SIP'};
+        }
+
+        ref.read(userProfileProvider.notifier).updateBalance(-amount);
+        ref.read(servicesProvider.notifier).activateService('srv_sip');
+        ref.read(engagementProvider.notifier).addCoins(50);
+        ref.read(engagementProvider.notifier).addAchievement('SIP Resumed');
+
+        final newTx = Transaction(
+          id: 'tx_sip_${DateTime.now().millisecondsSinceEpoch}',
+          amount: amount,
+          payee: 'SBI Bluechip Fund (SIP)',
+          category: 'Investment',
+          date: DateTime.now(),
+          type: 'debit',
+        );
+        ref.read(transactionsProvider.notifier).addTransaction(newTx);
+        ref.read(agentMemoryProvider.notifier).updateSIPDate(DateTime.now().toIso8601String());
+
+        return {
+          'status': 'success',
+          'service_id': 'srv_sip',
+          'amount_debited': amount,
+          'coins_awarded': 50,
+        };
+
+      case 'create_goal':
+        final name = args['name'] as String? ?? 'Custom Goal';
+        final targetAmount = (args['target_amount'] as num? ?? 10000.0).toDouble();
+
+        final goalId = 'goal_${DateTime.now().millisecondsSinceEpoch}';
+        final goal = Goal(
+          id: goalId,
+          name: name,
+          targetAmount: targetAmount,
+          savedAmount: 0.0,
+          deadline: DateTime.now().add(const Duration(days: 180)),
+        );
+
+        ref.read(goalsProvider.notifier).addGoal(goal);
+        return {
+          'status': 'success',
+          'goal_id': goalId,
+          'goal_name': name,
+          'target_amount': targetAmount,
         };
 
       case 'suggest_service_activation':

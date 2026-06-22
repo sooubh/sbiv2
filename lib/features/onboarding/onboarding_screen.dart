@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:sbiv2/core/theme/app_theme.dart';
 import 'package:sbiv2/data/repositories/state_providers.dart';
 import 'package:sbiv2/ai/engine/ai_coordinator.dart';
+import 'package:sbiv2/ai/memory/agent_memory.dart';
 
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key});
@@ -124,6 +125,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                       ref.read(servicesProvider.notifier).reset();
                       ref.read(engagementProvider.notifier).reset();
                       ref.read(onboardingChatProvider.notifier).reset();
+                      ref.read(agentMemoryProvider.notifier).reset();
                     },
                   ),
                 ],

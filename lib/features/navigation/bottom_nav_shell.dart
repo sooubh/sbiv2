@@ -4,11 +4,14 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:sbiv2/core/theme/app_theme.dart';
 import 'package:sbiv2/data/repositories/state_providers.dart';
 import 'package:sbiv2/ai/engine/ai_coordinator.dart';
+import 'package:sbiv2/ai/agent/agent_state.dart';
+import 'package:sbiv2/ai/memory/agent_memory.dart';
 import 'package:sbiv2/features/home/home_screen.dart';
 import 'package:sbiv2/features/onboarding/onboarding_screen.dart';
 import 'package:sbiv2/features/products/products_screen.dart';
 import 'package:sbiv2/features/engagement/engagement_screen.dart';
 import 'package:sbiv2/features/ai_chat/ai_chat_screen.dart';
+import 'package:sbiv2/features/settings/debug_simulation_page.dart';
 
 class BottomNavShell extends ConsumerStatefulWidget {
   const BottomNavShell({super.key});
@@ -18,8 +21,6 @@ class BottomNavShell extends ConsumerStatefulWidget {
 }
 
 class _BottomNavShellState extends ConsumerState<BottomNavShell> {
-  int _currentIndex = 0;
-
   final List<Widget> _screens = [
     const HomeScreen(),
     const OnboardingScreen(),
@@ -38,6 +39,7 @@ class _BottomNavShellState extends ConsumerState<BottomNavShell> {
     ref.read(engagementProvider.notifier).reset();
     ref.read(onboardingChatProvider.notifier).reset();
     ref.read(bankingChatProvider.notifier).reset();
+    ref.read(agentMemoryProvider.notifier).reset();
   }
 
   void _showSettingsSheet(BuildContext context) {
@@ -238,7 +240,7 @@ class _BottomNavShellState extends ConsumerState<BottomNavShell> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Enter Gemini API Key to enable Live WebSockets & REST. Leave empty to use local high-fidelity AI simulation.',
+                            'Enter Gemini API Key to enable Live WebSockets & REST. Leave empty to use offline-first mode.',
                             style: GoogleFonts.inter(fontSize: 11, color: AppTheme.textSecondary, height: 1.4),
                           ),
                           const SizedBox(height: 12),
@@ -268,7 +270,7 @@ class _BottomNavShellState extends ConsumerState<BottomNavShell> {
                                   SnackBar(
                                     content: Text(apiKeyController.text.isNotEmpty
                                         ? 'API Key saved. Reconnecting...'
-                                        : 'Switched to local simulation mode.'),
+                                        : 'Switched to offline-first mode.'),
                                     backgroundColor: AppTheme.primary,
                                   ),
                                 );
@@ -291,6 +293,27 @@ class _BottomNavShellState extends ConsumerState<BottomNavShell> {
                       ),
                     ),
                     const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.aiTeal,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        icon: const Icon(Icons.bug_report),
+                        label: Text('Open Debug Simulation Panel', style: GoogleFonts.inter(fontWeight: FontWeight.bold)),
+                        onPressed: () {
+                          Navigator.pop(context); // Close sheet
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (context) => const DebugSimulationPage()),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
@@ -327,8 +350,32 @@ class _BottomNavShellState extends ConsumerState<BottomNavShell> {
 
   @override
   Widget build(BuildContext context) {
+    final currentIndex = ref.watch(currentNavIndexProvider);
     final aiState = ref.watch(aiCoordinatorProvider);
+    final agentState = ref.watch(agentStateProvider);
     final coins = ref.watch(engagementProvider).sbiCoins;
+
+    Color statusColor = AppTheme.aiTeal;
+    String statusText = "Agent Connection: Active";
+
+    if (agentState.status == AgentStatus.error) {
+      statusColor = AppTheme.accentOrange;
+      statusText = "Agent Status: Error (${agentState.lastError ?? 'Unknown'})";
+    } else if (agentState.status == AgentStatus.reconnecting) {
+      statusColor = AppTheme.accentOrange;
+      statusText = "Agent Status: Reconnecting...";
+    } else if (agentState.connectionStatus == "connected") {
+      statusColor = AppTheme.accentGreen;
+      statusText = agentState.mode == AgentMode.onboarding 
+          ? "Agent Connection: Connected (Onboarding)" 
+          : "Agent Connection: Connected";
+    } else if (agentState.connectionStatus == "connecting") {
+      statusColor = Colors.amber;
+      statusText = "Agent Connection: Connecting...";
+    } else if (agentState.connectionStatus == "disconnected") {
+      statusColor = AppTheme.textSecondary;
+      statusText = "Agent Connection: Offline";
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -374,9 +421,7 @@ class _BottomNavShellState extends ConsumerState<BottomNavShell> {
           // Coins indicator
           GestureDetector(
             onTap: () {
-              setState(() {
-                _currentIndex = 3; // Navigate to Engagement Screen (coins tracker)
-              });
+              ref.read(currentNavIndexProvider.notifier).state = 3; // Navigate to Engagement Screen
             },
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -403,9 +448,17 @@ class _BottomNavShellState extends ConsumerState<BottomNavShell> {
           ),
           
           // Gear Settings Button
-          IconButton(
-            icon: const Icon(Icons.settings, color: Colors.white),
-            onPressed: () => _showSettingsSheet(context),
+          GestureDetector(
+            onLongPress: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const DebugSimulationPage()),
+              );
+            },
+            child: IconButton(
+              icon: const Icon(Icons.settings, color: Colors.white),
+              onPressed: () => _showSettingsSheet(context),
+            ),
           ),
         ],
       ),
@@ -425,16 +478,12 @@ class _BottomNavShellState extends ConsumerState<BottomNavShell> {
                       height: 8,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: aiState.mode == AIServiceMode.live
-                            ? AppTheme.accentGreen
-                            : (aiState.mode == AIServiceMode.rest ? Colors.amber : AppTheme.aiTeal),
+                        color: statusColor,
                       ),
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      aiState.mode == AIServiceMode.live
-                          ? "Agent Connection: Live (WebSocket)"
-                          : (aiState.mode == AIServiceMode.rest ? "Agent Connection: REST API" : "Agent Connection: Local Simulation"),
+                      statusText,
                       style: GoogleFonts.inter(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w500),
                     ),
                   ],
@@ -457,15 +506,13 @@ class _BottomNavShellState extends ConsumerState<BottomNavShell> {
               ],
             ),
           ),
-          Expanded(child: _screens[_currentIndex]),
+          Expanded(child: _screens[currentIndex]),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
+        currentIndex: currentIndex,
         onTap: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
+          ref.read(currentNavIndexProvider.notifier).state = index;
         },
         items: const [
           BottomNavigationBarItem(

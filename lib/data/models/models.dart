@@ -333,3 +333,31 @@ class Service {
     );
   }
 }
+
+class SignalSummary {
+  final String key;
+  final String title;
+  final DateTime timestamp;
+
+  SignalSummary({
+    required this.key,
+    required this.title,
+    required this.timestamp,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'key': key,
+      'title': title,
+      'timestamp': timestamp.toIso8601String(),
+    };
+  }
+
+  factory SignalSummary.fromJson(Map<String, dynamic> json) {
+    return SignalSummary(
+      key: json['key'] ?? '',
+      title: json['title'] ?? '',
+      timestamp: DateTime.parse(json['timestamp'] ?? DateTime.now().toIso8601String()),
+    );
+  }
+}

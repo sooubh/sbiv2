@@ -4,6 +4,10 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:sbiv2/core/theme/app_theme.dart';
 import 'package:sbiv2/data/repositories/state_providers.dart';
 import 'package:sbiv2/ai/engine/pattern_engine.dart';
+import 'package:sbiv2/features/agent/widgets/agent_timeline.dart';
+import 'package:sbiv2/features/agent/widgets/next_best_action_card.dart';
+import 'package:sbiv2/ai/behavior/retention_rules.dart';
+import 'package:sbiv2/ai/memory/agent_memory.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -13,6 +17,8 @@ class HomeScreen extends ConsumerWidget {
     final profile = ref.watch(userProfileProvider);
     final txs = ref.watch(transactionsProvider);
     final recommendations = ref.watch(recommendationsProvider);
+    final memory = ref.watch(agentMemoryProvider);
+    final profileType = ref.watch(profileTypeProvider);
 
     // Analyze transactions to get signals
     final signals = PatternEngine.analyze(profile, txs);
@@ -166,6 +172,30 @@ class HomeScreen extends ConsumerWidget {
             ),
           ),
 
+          // Proactive welcome / Today's insight message
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: [
+                const Icon(Icons.wb_sunny_outlined, color: Colors.orange, size: 16),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    RetentionRules.getGreeting(profile.name, profileType, memory.lastWelcomeMessage),
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Next Best Action Card
+          const NextBestActionCard(),
+
           // Agent is watching Card
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -226,6 +256,37 @@ class HomeScreen extends ConsumerWidget {
                   ),
                 ],
               ),
+            ),
+          ),
+
+          // ── Recent Agent Actions ─────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.history, color: AppTheme.aiTeal, size: 16),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Recent Agent Actions',
+                      style: GoogleFonts.poppins(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Consumer(
+                  builder: (context, ref, _) {
+                    final entries = ref.watch(timelineProvider);
+                    return AgentTimeline(entries: entries, maxEntries: 3);
+                  },
+                ),
+              ],
             ),
           ),
 

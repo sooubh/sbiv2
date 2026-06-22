@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:sbiv2/data/mock/mock_data.dart';
 import 'package:sbiv2/data/models/models.dart';
+import 'package:sbiv2/features/agent/models/timeline_entry.dart';
 
 // Hive Box Names
 const String kProfileBox = 'profile_box';
@@ -11,6 +12,8 @@ const String kRecommendationsBox = 'recommendations_box';
 const String kServicesBox = 'services_box';
 const String kEngagementBox = 'engagement_box';
 const String kSystemBox = 'system_box'; // stores current profile type
+const String kAgentMemoryBox = 'agent_memory_box';
+const String kTimelineBox = 'timeline_box';
 
 // Initializer function for Hive
 Future<void> initHive() async {
@@ -22,6 +25,8 @@ Future<void> initHive() async {
   await Hive.openBox(kServicesBox);
   await Hive.openBox(kEngagementBox);
   await Hive.openBox(kSystemBox);
+  await Hive.openBox(kAgentMemoryBox);
+  await Hive.openBox(kTimelineBox);
 }
 
 // Profile Type: 'A' (Rohan, new) or 'B' (Sourabh, existing)
@@ -79,6 +84,11 @@ class UserProfileNotifier extends StateNotifier<UserProfile> {
 
   void updateBalance(double amount) {
     state = state.copyWith(balance: state.balance + amount);
+    saveProfile();
+  }
+
+  void setBalance(double balance) {
+    state = state.copyWith(balance: balance);
     saveProfile();
   }
 
@@ -141,6 +151,11 @@ class TransactionsNotifier extends StateNotifier<List<Transaction>> {
 
   void addTransaction(Transaction tx) {
     state = [tx, ...state];
+    saveTransactions();
+  }
+
+  void removeSIPTransactions() {
+    state = state.where((tx) => !(tx.payee.contains('SIP') || tx.payee.contains('Mutual Fund'))).toList();
     saveTransactions();
   }
 
@@ -417,3 +432,70 @@ class ChatMessagesNotifier extends StateNotifier<List<ChatMessage>> {
     }
   }
 }
+
+// ── Agent Timeline ────────────────────────────────────────────────────────────
+
+class TimelineNotifier extends StateNotifier<List<TimelineEntry>> {
+  static const int _maxEntries = 50;
+
+  TimelineNotifier() : super([]) {
+    _load();
+  }
+
+  /// Adds a new entry at the front (newest first). Trims to 50.
+  void addEntry(TimelineEntry entry) {
+    final updated = [entry, ...state];
+    if (updated.length > _maxEntries) {
+      updated.removeLast();
+    }
+    state = updated;
+    _save();
+  }
+
+  /// Convenience factory caller to reduce boilerplate at call sites.
+  void log({
+    required TimelineEntryType type,
+    required String title,
+    required String description,
+    required TimelineEntryStatus status,
+  }) {
+    addEntry(TimelineEntry.create(
+      type: type,
+      title: title,
+      description: description,
+      status: status,
+    ));
+  }
+
+  void clear() {
+    state = [];
+    Hive.box(kTimelineBox).clear();
+  }
+
+  void _save() {
+    final box = Hive.box(kTimelineBox);
+    box.put('entries', state.map((e) => e.toJson()).toList());
+  }
+
+  void _load() {
+    final box = Hive.box(kTimelineBox);
+    final raw = box.get('entries');
+    if (raw != null) {
+      try {
+        final list = List<dynamic>.from(raw);
+        state = list
+            .map((e) => TimelineEntry.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+      } catch (_) {
+        state = [];
+      }
+    }
+  }
+}
+
+final timelineProvider =
+    StateNotifierProvider<TimelineNotifier, List<TimelineEntry>>((ref) {
+  return TimelineNotifier();
+});
+
+final currentNavIndexProvider = StateProvider<int>((ref) => 0);

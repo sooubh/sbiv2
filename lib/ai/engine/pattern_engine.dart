@@ -18,6 +18,27 @@ class PatternEngineSignals {
     required this.summaryForAgent,
     required this.activeSignalsList,
   });
+
+  List<SignalSummary> get compactSummaries {
+    final now = DateTime.now();
+    final List<SignalSummary> list = [];
+    if (spendingSpike) {
+      list.add(SignalSummary(key: 'spending_spike', title: 'Spending Spike Detected', timestamp: now));
+    }
+    if (idleBalance) {
+      list.add(SignalSummary(key: 'idle_balance', title: 'Large Idle Savings Balance', timestamp: now));
+    }
+    if (missedRecurring) {
+      list.add(SignalSummary(key: 'missed_recurring', title: 'Missed Mutual Fund SIP', timestamp: now));
+    }
+    if (lowBalance) {
+      list.add(SignalSummary(key: 'low_balance', title: 'Low Account Balance', timestamp: now));
+    }
+    if (salaryNoSave) {
+      list.add(SignalSummary(key: 'salary_no_save', title: 'Salary Credited, No Savings', timestamp: now));
+    }
+    return list;
+  }
 }
 
 class PatternEngine {

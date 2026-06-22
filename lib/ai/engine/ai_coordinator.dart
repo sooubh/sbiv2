@@ -1,15 +1,23 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sbiv2/ai/engine/gemini_live_service.dart';
 import 'package:sbiv2/ai/engine/gemini_rest_service.dart';
 import 'package:sbiv2/ai/engine/pattern_engine.dart';
 import 'package:sbiv2/ai/tools/tool_dispatcher.dart';
 import 'package:sbiv2/data/repositories/state_providers.dart';
+import 'package:sbiv2/ai/agent/agent_state.dart';
+import 'package:sbiv2/ai/memory/agent_memory.dart';
+import 'package:sbiv2/ai/events/agent_event.dart';
+import 'package:sbiv2/ai/voice/voice_service.dart';
+import 'package:sbiv2/features/agent/models/timeline_entry.dart';
+import 'package:sbiv2/ai/behavior/next_best_action.dart';
+import 'package:sbiv2/ai/behavior/proactive_agent_engine.dart';
+import 'package:sbiv2/ai/behavior/retention_rules.dart';
 
 // API Key provider (can be updated in UI)
 final geminiApiKeyProvider = StateProvider<String>((ref) {
-  // Try to load from environment first, otherwise empty default (which triggers high-fidelity Mock simulation)
   return const String.fromEnvironment('GEMINI_API_KEY', defaultValue: '');
 });
 
@@ -43,6 +51,20 @@ class AICoordinatorState {
   }
 }
 
+class ToolCallItem {
+  final String name;
+  final Map<String, dynamic> args;
+  final String callId;
+  final Future<void> Function(String name, Map<String, dynamic> args, String callId) action;
+
+  ToolCallItem({
+    required this.name,
+    required this.args,
+    required this.callId,
+    required this.action,
+  });
+}
+
 final aiCoordinatorProvider = StateNotifierProvider<AICoordinator, AICoordinatorState>((ref) {
   return AICoordinator(ref);
 });
@@ -55,6 +77,10 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
   // Keep conversation history for REST API & Simulated fallback
   final List<Map<String, dynamic>> _restHistory = [];
 
+  // Sequential Tool Call Queue
+  final List<ToolCallItem> _toolCallQueue = [];
+  bool _isProcessingToolCall = false;
+
   AICoordinator(this._ref)
       : super(AICoordinatorState(
           mode: AIServiceMode.simulated,
@@ -64,51 +90,178 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
     // Listen to profile switches to re-initiate
     _ref.listen(profileTypeProvider, (previous, next) {
       _restHistory.clear();
+      _toolCallQueue.clear();
+      _isProcessingToolCall = false;
+      final memory = _ref.read(agentMemoryProvider);
+      final isOnboarding = !memory.onboardingCompleted && next == 'A';
+      _ref.read(agentStateProvider.notifier).setMode(
+        isOnboarding ? AgentMode.onboarding : AgentMode.banking
+      );
+      _ref.read(agentStateProvider.notifier).reset();
       _initializeService();
     });
 
     _initializeService();
   }
 
+  void _enqueueToolCall(
+    String name,
+    Map<String, dynamic> args,
+    String callId,
+    Future<void> Function(String name, Map<String, dynamic> args, String callId) action,
+  ) {
+    _toolCallQueue.add(ToolCallItem(name: name, args: args, callId: callId, action: action));
+    _processNextToolCall();
+  }
+
+  Future<void> _processNextToolCall() async {
+    if (_isProcessingToolCall || _toolCallQueue.isEmpty) return;
+
+    _isProcessingToolCall = true;
+    final item = _toolCallQueue.removeAt(0);
+
+    try {
+      await item.action(item.name, item.args, item.callId);
+    } catch (e) {
+      if (kDebugMode) print("Error processing queued tool call: $e");
+    } finally {
+      _isProcessingToolCall = false;
+      _processNextToolCall();
+    }
+  }
+
   Future<void> _initializeService() async {
     final apiKey = _ref.read(geminiApiKeyProvider);
+    final agentState = _ref.read(agentStateProvider.notifier);
+    final eventNotifier = _ref.read(agentEventProvider.notifier);
+
+    // Initialize mode
+    final memory = _ref.read(agentMemoryProvider);
+    final profileType = _ref.read(profileTypeProvider);
+    final isOnboarding = !memory.onboardingCompleted && profileType == 'A';
+    agentState.setMode(isOnboarding ? AgentMode.onboarding : AgentMode.banking);
+
     if (apiKey.isEmpty) {
-      state = state.copyWith(mode: AIServiceMode.simulated, error: "No API Key. Running in high-fidelity mock simulation mode.");
+      state = state.copyWith(mode: AIServiceMode.simulated, error: "No API Key. Running in simulated mode.");
+      agentState.setConnectionStatus("disconnected");
+      agentState.setStatus(AgentStatus.idle);
+      _triggerProactiveWelcome();
       return;
     }
 
     state = state.copyWith(isConnecting: true, error: null);
+    agentState.setConnectionStatus("connecting");
+    agentState.setStatus(AgentStatus.reconnecting);
 
     final sysPrompt = _buildSystemPrompt();
     final tools = _getToolDeclarations();
 
     // Try Live WebSockets first
     _liveService.disconnect();
+    
     _liveService.onConnected = () {
       state = state.copyWith(mode: AIServiceMode.live, isConnecting: false, isThinking: false);
+      agentState.setConnectionStatus("connected");
+      agentState.setStatus(AgentStatus.idle);
+      eventNotifier.emit(AgentEventType.connected, "Connected to Gemini Live");
+      _ref.read(timelineProvider.notifier).log(
+        type: TimelineEntryType.connection,
+        title: 'Gemini Live Connected',
+        description: 'WebSocket session established successfully.',
+        status: TimelineEntryStatus.success,
+      );
+      _triggerProactiveWelcome();
     };
+
     _liveService.onMessageReceived = (text) {
       state = state.copyWith(isThinking: false);
+      agentState.setStatus(AgentStatus.idle);
+      agentState.setLastAgentMessage(text);
       _addMessageToUI('agent', text);
+      // Speak the agent response (no-op if TTS unavailable)
+      _ref.read(voiceServiceProvider).speak(text);
     };
-    _liveService.onToolCallReceived = (name, args, callId) async {
-      state = state.copyWith(isThinking: true);
-      _addMessageToUI('system', "Agent executing tool: $name...", toolCall: {'name': name, 'args': args});
-      
-      final output = await ToolDispatcher.dispatch(_ref, name, args);
-      
-      _addMessageToUI('tool', "Agent completed $name ✅", toolCall: {'output': output});
-      _liveService.sendToolResponse(callId, output);
-      state = state.copyWith(isThinking: false);
+
+    // Reconnection Lifecycles
+    _liveService.onReconnectStarted = () {
+      agentState.setConnectionStatus("reconnecting");
+      agentState.setStatus(AgentStatus.reconnecting);
+      eventNotifier.emit(AgentEventType.reconnectStarted, "Gemini Live disconnected. Reconnecting...");
+      _ref.read(timelineProvider.notifier).log(
+        type: TimelineEntryType.connection,
+        title: 'Reconnecting to Gemini Live',
+        description: 'WebSocket dropped. Auto-reconnect in progress.',
+        status: TimelineEntryStatus.running,
+      );
     };
+
+    _liveService.onReconnectSuccess = () {
+      state = state.copyWith(mode: AIServiceMode.live, isConnecting: false, isThinking: false);
+      agentState.setConnectionStatus("connected");
+      agentState.setStatus(AgentStatus.idle);
+      
+      final isRestored = _liveService.isSessionRestored;
+      eventNotifier.emit(
+        isRestored ? AgentEventType.sessionRestored : AgentEventType.reconnectSuccess,
+        isRestored ? "Live session successfully restored" : "Successfully reconnected to Gemini Live",
+      );
+      _ref.read(timelineProvider.notifier).log(
+        type: TimelineEntryType.connection,
+        title: isRestored ? 'Session Restored' : 'Reconnected',
+        description: isRestored
+            ? 'Gemini Live session resumed from previous context.'
+            : 'WebSocket reconnected successfully.',
+        status: TimelineEntryStatus.success,
+      );
+      _triggerProactiveWelcome();
+    };
+
+    _liveService.onReconnectFailed = (err) {
+      agentState.setConnectionStatus("disconnected");
+      agentState.setError(err);
+      eventNotifier.emit(AgentEventType.reconnectFailed, "Reconnection failed: $err");
+      _ref.read(timelineProvider.notifier).log(
+        type: TimelineEntryType.connection,
+        title: 'Reconnect Failed',
+        description: 'Falling back to REST. Error: $err',
+        status: TimelineEntryStatus.failed,
+      );
+      // Fallback internally to REST but preserve connection status value in state
+      state = state.copyWith(mode: AIServiceMode.rest, error: err);
+    };
+
+    _liveService.onToolCallReceived = (name, args, callId) {
+      _enqueueToolCall(name, args, callId, (name, args, callId) async {
+        state = state.copyWith(isThinking: true);
+        agentState.setStatus(AgentStatus.thinking);
+        _addMessageToUI('system', "Agent executing tool: $name...", toolCall: {'name': name, 'args': args});
+        
+        final output = await _executeTool(name, args);
+        
+        if (output['status'] == 'failed' || output['status'] == 'error') {
+          final reason = output['reason'] ?? 'Tool call failed';
+          _addMessageToUI('tool', "Agent tool $name failed ❌: $reason", toolCall: {'output': output});
+        } else {
+          _addMessageToUI('tool', "Agent completed $name ✅", toolCall: {'output': output});
+        }
+
+        _liveService.sendToolResponse(callId, output);
+        state = state.copyWith(isThinking: false);
+        
+        if (agentState.state.status != AgentStatus.error) {
+          agentState.setStatus(AgentStatus.idle);
+        }
+      });
+    };
+
     _liveService.onError = (err) {
       if (kDebugMode) print("Live error: $err");
+      agentState.setError(err);
+      eventNotifier.emit(AgentEventType.error, "Gemini Live error: $err");
     };
+
     _liveService.onDisconnected = () {
-      if (state.mode == AIServiceMode.live) {
-        // Switch to REST fallback
-        state = state.copyWith(mode: AIServiceMode.rest, error: "WebSocket disconnected. Switched to REST fallback.");
-      }
+      eventNotifier.emit(AgentEventType.disconnected, "Gemini Live connection lost");
     };
 
     final connected = await _liveService.connect(
@@ -120,6 +273,68 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
     if (!connected) {
       // Try REST
       state = state.copyWith(mode: AIServiceMode.rest, isConnecting: false);
+      agentState.setConnectionStatus("connected"); // REST fallback is considered active
+      agentState.setStatus(AgentStatus.idle);
+      eventNotifier.emit(AgentEventType.disconnected, "Gemini Live initial connect failed. REST fallback active.");
+    }
+  }
+
+  // Unified tool caller that handles agent state machine transitions and failures
+  Future<Map<String, dynamic>> _executeTool(String name, Map<String, dynamic> args) async {
+    final agentState = _ref.read(agentStateProvider.notifier);
+    final eventNotifier = _ref.read(agentEventProvider.notifier);
+    final timeline = _ref.read(timelineProvider.notifier);
+    agentState.startToolCall(name);
+
+    eventNotifier.emit(AgentEventType.toolStarted, "Tool execution started: $name", metadata: {'name': name, 'args': args});
+    timeline.log(
+      type: TimelineEntryType.toolStarted,
+      title: 'Tool: $name',
+      description: 'Args: ${args.entries.map((e) => '${e.key}=${e.value}').join(', ')}',
+      status: TimelineEntryStatus.running,
+    );
+
+    try {
+      final output = await ToolDispatcher.dispatch(_ref, name, args);
+      if (output['status'] == 'failed' || output['status'] == 'error') {
+        final reason = output['reason'] ?? 'Unknown tool failure';
+        agentState.endToolCall(error: reason);
+        eventNotifier.emit(AgentEventType.toolFailed, "Tool execution failed: $name", metadata: {'name': name, 'reason': reason});
+        timeline.log(
+          type: TimelineEntryType.toolFailed,
+          title: '$name Failed',
+          description: reason,
+          status: TimelineEntryStatus.failed,
+        );
+      } else {
+        agentState.endToolCall();
+        eventNotifier.emit(AgentEventType.toolCompleted, "Tool execution completed: $name", metadata: {'name': name, 'output': output});
+        // Special labels for KYC / UPI tools
+        final isKyc = name == 'start_kyc';
+        final isUpi = name == 'activate_upi';
+        timeline.log(
+          type: isKyc || isUpi ? TimelineEntryType.onboarding : TimelineEntryType.toolCompleted,
+          title: isKyc
+              ? 'KYC Step Completed'
+              : isUpi
+                  ? 'UPI Activated'
+                  : '$name Completed',
+          description: output['message']?.toString() ?? 'Tool executed successfully.',
+          status: TimelineEntryStatus.success,
+        );
+      }
+      return output;
+    } catch (e) {
+      final errStr = e.toString();
+      agentState.endToolCall(error: errStr);
+      eventNotifier.emit(AgentEventType.toolFailed, "Tool execution threw exception: $name", metadata: {'name': name, 'reason': errStr});
+      timeline.log(
+        type: TimelineEntryType.toolFailed,
+        title: '$name Exception',
+        description: errStr,
+        status: TimelineEntryStatus.failed,
+      );
+      return {'status': 'error', 'reason': errStr};
     }
   }
 
@@ -127,140 +342,186 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
     final profile = _ref.read(userProfileProvider);
     final txs = _ref.read(transactionsProvider);
     final signals = PatternEngine.analyze(profile, txs);
+    final memory = _ref.read(agentMemoryProvider);
 
-    return """
-You are the YONO SBI 2.0 Agent, a proactive, helpful, and smart conversational AI banking assistant. 
-You can talk to the user and perform banking operations on their behalf.
-You speak in a blend of English and Hindi (Hinglish), keeping a friendly and reassuring tone.
-Always start the conversation appropriate to the user's KYC state and account type.
+    // Track the last detected signal in memory
+    if (signals.compactSummaries.isNotEmpty) {
+      final latestSignal = signals.compactSummaries.first;
+      if (memory.lastDetectedSignal == null || memory.lastDetectedSignal!.key != latestSignal.key) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _ref.read(agentMemoryProvider.notifier).setLastDetectedSignal(latestSignal);
+          // Log new signal detection to timeline
+          _ref.read(timelineProvider.notifier).log(
+            type: TimelineEntryType.signalDetected,
+            title: 'Signal: ${latestSignal.key}',
+            description: latestSignal.title,
+            status: TimelineEntryStatus.info,
+          );
+        });
+      }
+    }
 
-Active Financial Signals Detected by PatternEngine (inject this context into your decisions):
-${signals.summaryForAgent}
+    final isOnboarding = !memory.onboardingCompleted && memory.activeProfileType == 'A';
+
+    if (isOnboarding) {
+      return """
+You are the YONO SBI 2.0 Onboarding Agent, a guided conversational AI assistant.
+Your ONLY goal is to help Rohan complete KYC and activate UPI.
+Current KYC Step in memory: ${memory.kycStep}
+
+KYC sequential flow:
+1. PAN verification: Ask the user to verify PAN. Call `start_kyc(step: "pan", user_confirmed: true)` when they say they want to proceed.
+2. Aadhaar verification: Ask the user to verify Aadhaar. Call `start_kyc(step: "aadhaar", user_confirmed: true)` when they say they want to proceed.
+3. Video KYC: Ask the user to verify via Video KYC. Call `start_kyc(step: "video_kyc", user_confirmed: true)` when they say they want to proceed.
+4. UPI activation: Call `activate_upi(vpa: "rohan@sbi")` to enable UPI.
+
+BEHAVIOR RULES:
+- Ask short, guided questions. Do not ask for multiple things at once.
+- Advance exactly one step at a time.
+- If KYC is complete, congratulate the user. You will then automatically hand off to the banking agent.
+- Explain briefly in Hinglish/English what tool you are calling before calling it.
+""";
+    } else {
+      String signalContext = signals.summaryForAgent;
+      if (memory.lastDetectedSignal != null) {
+        final timeDiff = DateTime.now().difference(memory.lastDetectedSignal!.timestamp);
+        if (timeDiff.inMinutes < 60) {
+          signalContext += "\nNote: You recently addressed the '${memory.lastDetectedSignal!.key}' signal. Avoid repeating the exact suggestion unless the user specifically asks.";
+        }
+      }
+
+      return """
+You are the YONO SBI 2.0 Banking Agent, a proactive and smart conversational banking assistant.
+You speak in a friendly blend of English and Hindi (Hinglish). Keep response style banking-like, concise, and professional.
+
+Active Financial Signals Detected by PatternEngine:
+$signalContext
+
+USER PROFILE MEMORY:
+- Primary Goal: ${memory.primaryGoal}
+- Risk Level: ${memory.riskLevel}
+- User Preference Summary: ${memory.userPreferenceSummary}
+- Last Executed Tool: ${memory.lastExecutedTool}
+- Action History: ${memory.actionHistory.join(", ")}
 
 YOUR TOOLS:
-1. qualify_lead: Use this when the user is Rohan (Naya Customer) and gives their name, income bracket (e.g. 0-5 Lakhs, 5-10 Lakhs, etc.), and banking need.
-2. initiate_kyc_step: Call this during Rohan's onboarding to do PAN, Aadhaar, or Video KYC verification. You must do this sequentially.
-3. activate_upi: Call this when Rohan selects a UPI VPA (like rohan@sbi) to activate UPI.
-4. surface_recommendation: Call this to add a custom recommendation for the user.
-5. log_spending_insight: Call this to add a spending alert or anomaly to their story feed.
-6. boost_goal_savings: Call this to transfer money from balance to a savings goal (max ₹500, once per session).
-7. execute_transfer: Call this when the user asks to send/transfer money (e.g. "mom ko 2000 bhej do" -> recipient: "mom", amount: 2000).
-8. suggest_service_activation: Call this to activate a digital banking service (like Fixed Deposit, SIP, Mutual Funds, etc.).
+1. transfer_money(recipient, amount, reason): Use this when the user asks to send or transfer money.
+2. move_to_fd(amount, reason): Use this to transfer idle savings balance to Fixed Deposit.
+3. resume_sip(reason): Use this to resume a missed Mutual Fund SIP investment.
+4. create_goal(name, target_amount): Use this to create a new financial goal.
+5. log_insight(category, observation, reason): Use this to log a spending/saving alert or insight card.
 
-If KYC is not complete, focus on getting the customer onboarded. 
-If KYC is complete, look at active signals like missedRecurring (missed SIP) or idleBalance (large balance in savings) and suggest taking action, executing transfers, or setting up FDs.
-Keep your reasoning short and always explain why you are running a tool in chat.
+BEHAVIOR RULES:
+- Proactively suggest the next best action based on the active financial signals.
+- Use the memory context to tailor your responses.
+- Explain briefly what you are doing before executing a tool call.
 """;
+    }
   }
 
   List<Map<String, dynamic>> _getToolDeclarations() {
-    return [
-      {
-        'name': 'qualify_lead',
-        'description': 'Updates user profile with income bracket, banking need, and existing bank.',
-        'parameters': {
-          'type': 'OBJECT',
-          'properties': {
-            'income_bracket': {'type': 'STRING', 'description': 'Income range (e.g. 0-5 Lakhs, 5-10 Lakhs, 10+ Lakhs)'},
-            'banking_need': {'type': 'STRING', 'description': 'E.g. Savings & UPI, Wealth Creation, Loans'},
-            'existing_bank': {'type': 'STRING', 'description': 'E.g. HDFC, ICICI, None'}
-          },
-          'required': ['income_bracket', 'banking_need', 'existing_bank']
+    final memory = _ref.read(agentMemoryProvider);
+    final isOnboarding = !memory.onboardingCompleted && memory.activeProfileType == 'A';
+
+    if (isOnboarding) {
+      return [
+        {
+          'name': 'start_kyc',
+          'description': 'Advances user KYC step verification sequentially.',
+          'parameters': {
+            'type': 'OBJECT',
+            'properties': {
+              'step': {'type': 'STRING', 'description': 'Step to verify: "pan", "aadhaar", or "video_kyc"'},
+              'user_confirmed': {'type': 'BOOLEAN', 'description': 'If user confirmed to initiate the KYC step'}
+            },
+            'required': ['step', 'user_confirmed']
+          }
+        },
+        {
+          'name': 'activate_upi',
+          'description': 'Activates UPI services for the current user.',
+          'parameters': {
+            'type': 'OBJECT',
+            'properties': {
+              'vpa': {'type': 'STRING', 'description': 'Preferred VPA/UPI ID, e.g. rohan@sbi'}
+            },
+            'required': ['vpa']
+          }
         }
-      },
-      {
-        'name': 'initiate_kyc_step',
-        'description': 'Advances user KYC step conversational verification.',
-        'parameters': {
-          'type': 'OBJECT',
-          'properties': {
-            'step': {'type': 'STRING', 'description': 'Step to verify: "pan", "aadhaar", or "video_kyc"'},
-            'user_confirmed': {'type': 'BOOLEAN', 'description': 'If user confirmed to initiate the KYC step'}
-          },
-          'required': ['step', 'user_confirmed']
+      ];
+    } else {
+      return [
+        {
+          'name': 'transfer_money',
+          'description': 'Executes a direct money transfer to a recipient.',
+          'parameters': {
+            'type': 'OBJECT',
+            'properties': {
+              'recipient': {'type': 'STRING', 'description': 'Who is receiving the money'},
+              'amount': {'type': 'NUMBER', 'description': 'Amount to send'},
+              'reason': {'type': 'STRING', 'description': 'Purpose of payment'}
+            },
+            'required': ['recipient', 'amount', 'reason']
+          }
+        },
+        {
+          'name': 'move_to_fd',
+          'description': 'Saves money from balance into a secure Fixed Deposit.',
+          'parameters': {
+            'type': 'OBJECT',
+            'properties': {
+              'amount': {'type': 'NUMBER', 'description': 'Amount to deposit'},
+              'reason': {'type': 'STRING', 'description': 'Reason for opening Fixed Deposit'}
+            },
+            'required': ['amount', 'reason']
+          }
+        },
+        {
+          'name': 'resume_sip',
+          'description': 'Resumes the missed Mutual Fund SIP payment.',
+          'parameters': {
+            'type': 'OBJECT',
+            'properties': {
+              'reason': {'type': 'STRING', 'description': 'Reason for resuming'}
+            },
+            'required': ['reason']
+          }
+        },
+        {
+          'name': 'create_goal',
+          'description': 'Creates a new savings goal for the user.',
+          'parameters': {
+            'type': 'OBJECT',
+            'properties': {
+              'name': {'type': 'STRING', 'description': 'Name of the goal, e.g. Dream Car, Home Downpayment'},
+              'target_amount': {'type': 'NUMBER', 'description': 'Target savings amount'}
+            },
+            'required': ['name', 'target_amount']
+          }
+        },
+        {
+          'name': 'log_insight',
+          'description': 'Logs a spending alert or pattern flag to user Feed.',
+          'parameters': {
+            'type': 'OBJECT',
+            'properties': {
+              'category': {'type': 'STRING', 'description': 'Category of spending'},
+              'observation': {'type': 'STRING', 'description': 'What was noticed'},
+              'reason': {'type': 'STRING', 'description': 'Why this was noticed'}
+            },
+            'required': ['category', 'observation', 'reason']
+          }
         }
-      },
-      {
-        'name': 'activate_upi',
-        'description': 'Activates UPI services for the current user.',
-        'parameters': {
-          'type': 'OBJECT',
-          'properties': {
-            'vpa': {'type': 'STRING', 'description': 'Preferred VPA/UPI ID, e.g. rohan@sbi'}
-          },
-          'required': ['vpa']
-        }
-      },
-      {
-        'name': 'surface_recommendation',
-        'description': 'Surfaces a personalized financial recommendation card.',
-        'parameters': {
-          'type': 'OBJECT',
-          'properties': {
-            'recommendation_id': {'type': 'STRING', 'description': 'E.g. rec_fd, rec_sip'},
-            'reason': {'type': 'STRING', 'description': 'Explain why the recommendation is surfaced.'}
-          },
-          'required': ['recommendation_id', 'reason']
-        }
-      },
-      {
-        'name': 'log_spending_insight',
-        'description': 'Logs a spending alert or pattern flag to user Feed.',
-        'parameters': {
-          'type': 'OBJECT',
-          'properties': {
-            'category': {'type': 'STRING', 'description': 'Category of spending'},
-            'observation': {'type': 'STRING', 'description': 'What was noticed'},
-            'reason': {'type': 'STRING', 'description': 'Why this was noticed'}
-          },
-          'required': ['category', 'observation', 'reason']
-        }
-      },
-      {
-        'name': 'boost_goal_savings',
-        'description': 'Saves money from balance into a specific savings goal (max ₹500 limit).',
-        'parameters': {
-          'type': 'OBJECT',
-          'properties': {
-            'goal_id': {'type': 'STRING', 'description': 'Goal identifier'},
-            'amount': {'type': 'NUMBER', 'description': 'Amount to save (max 500)'},
-            'reason': {'type': 'STRING', 'description': 'Reason for boosting'}
-          },
-          'required': ['goal_id', 'amount', 'reason']
-        }
-      },
-      {
-        'name': 'execute_transfer',
-        'description': 'Executes a direct money transfer to a recipient.',
-        'parameters': {
-          'type': 'OBJECT',
-          'properties': {
-            'recipient': {'type': 'STRING', 'description': 'Who is receiving the money'},
-            'amount': {'type': 'NUMBER', 'description': 'Amount to send'},
-            'reason': {'type': 'STRING', 'description': 'Purpose of payment'}
-          },
-          'required': ['recipient', 'amount', 'reason']
-        }
-      },
-      {
-        'name': 'suggest_service_activation',
-        'description': 'Recommends and activates a digital banking service.',
-        'parameters': {
-          'type': 'OBJECT',
-          'properties': {
-            'service_id': {'type': 'STRING', 'description': 'Service identifier'},
-            'reason': {'type': 'STRING', 'description': 'Why this service is suggested'}
-          },
-          'required': ['service_id', 'reason']
-        }
-      }
-    ];
+      ];
+    }
   }
 
   void _addMessageToUI(String sender, String text, {Map<String, dynamic>? toolCall}) {
-    final profile = _ref.read(userProfileProvider);
-    // Route message to correct chat provider based on current KYC status (onboarding vs general banking chat)
-    if (!profile.kycComplete && _ref.read(profileTypeProvider) == 'A') {
+    final memory = _ref.read(agentMemoryProvider);
+    final profileType = _ref.read(profileTypeProvider);
+    final isOnboarding = !memory.onboardingCompleted && profileType == 'A';
+
+    if (isOnboarding) {
       _ref.read(onboardingChatProvider.notifier).addMessage(
             ChatMessage(sender: sender, text: text, timestamp: DateTime.now(), toolCall: toolCall),
           );
@@ -272,8 +533,10 @@ Keep your reasoning short and always explain why you are running a tool in chat.
   }
 
   Future<void> sendMessage(String text) async {
+    final agentState = _ref.read(agentStateProvider.notifier);
     _addMessageToUI('user', text);
     state = state.copyWith(isThinking: true);
+    agentState.setStatus(AgentStatus.thinking);
 
     if (state.mode == AIServiceMode.live) {
       _liveService.sendMessage(text);
@@ -295,6 +558,7 @@ Keep your reasoning short and always explain why you are running a tool in chat.
     final apiKey = _ref.read(geminiApiKeyProvider);
     final sysPrompt = _buildSystemPrompt();
     final tools = _getToolDeclarations();
+    final agentState = _ref.read(agentStateProvider.notifier);
 
     _restHistory.add({
       'role': 'user',
@@ -318,7 +582,9 @@ Keep your reasoning short and always explain why you are running a tool in chat.
         final parts = message['parts'] as List;
         for (var part in parts) {
           if (part['text'] != null) {
+            agentState.setLastAgentMessage(part['text']);
             _addMessageToUI('agent', part['text']);
+            _ref.read(voiceServiceProvider).speak(part['text']);
           }
           if (part['functionCall'] != null) {
             final funcCall = part['functionCall'];
@@ -326,8 +592,15 @@ Keep your reasoning short and always explain why you are running a tool in chat.
             final args = Map<String, dynamic>.from(funcCall['args'] ?? {});
             
             _addMessageToUI('system', "Agent executing tool: $name...", toolCall: {'name': name, 'args': args});
-            final output = await ToolDispatcher.dispatch(_ref, name, args);
-            _addMessageToUI('tool', "Agent completed $name ✅", toolCall: {'output': output});
+            
+            final output = await _executeTool(name, args);
+            
+            if (output['status'] == 'failed' || output['status'] == 'error') {
+              final reason = output['reason'] ?? 'Tool call failed';
+              _addMessageToUI('tool', "Agent tool $name failed ❌: $reason", toolCall: {'output': output});
+            } else {
+              _addMessageToUI('tool', "Agent completed $name ✅", toolCall: {'output': output});
+            }
 
             // Send tool response to REST in the next call
             _restHistory.add({
@@ -356,7 +629,9 @@ Keep your reasoning short and always explain why you are running a tool in chat.
               final fuParts = followUpMsg['parts'] as List;
               for (var fuPart in fuParts) {
                 if (fuPart['text'] != null) {
+                  agentState.setLastAgentMessage(fuPart['text']);
                   _addMessageToUI('agent', fuPart['text']);
+                  _ref.read(voiceServiceProvider).speak(fuPart['text']);
                 }
               }
             }
@@ -370,11 +645,15 @@ Keep your reasoning short and always explain why you are running a tool in chat.
       return;
     } finally {
       state = state.copyWith(isThinking: false);
+      if (agentState.state.status != AgentStatus.error) {
+        agentState.setStatus(AgentStatus.idle);
+      }
     }
   }
 
   // High-fidelity local simulation mode when offline or no API Key
   Future<void> _sendSimulatedMessage(String text) async {
+    final agentState = _ref.read(agentStateProvider.notifier);
     await Future.delayed(const Duration(milliseconds: 800)); // Initial thinking delay
 
     final query = text.toLowerCase();
@@ -385,8 +664,10 @@ Keep your reasoning short and always explain why you are running a tool in chat.
 
     final profile = _ref.read(userProfileProvider);
     final profileType = _ref.read(profileTypeProvider);
+    final memory = _ref.read(agentMemoryProvider);
+    final isOnboarding = !memory.onboardingCompleted && profileType == 'A';
 
-    if (!profile.kycComplete && profileType == 'A') {
+    if (isOnboarding) {
       // Rohan Onboarding Chat Simulation
       if (profile.incomeBracket.isEmpty) {
         agentInitialText = "Namaste Rohan! Aayein aapka SBI savings account setup process start karte hain. Lead qualify kar raha hun.";
@@ -399,17 +680,17 @@ Keep your reasoning short and always explain why you are running a tool in chat.
         agentFinalText = "Leads qualified! 🚀 Aap high-yield SBI Quick Savings profile ke liye eligible hain. Ab KYC verification initialize karenge. PAN check start karne ke liye 'verify PAN' type karein.";
       } else if (profile.kycStep == 'none') {
         agentInitialText = "Understood. PAN Verification check initialise kar raha hun. API parameters fetch ho rahe hain...";
-        triggerTool = "initiate_kyc_step";
+        triggerTool = "start_kyc";
         toolArgs = {'step': 'pan', 'user_confirmed': true};
         agentFinalText = "PAN verified successfully! ✅ 25 SBI Coins earned. Aapka details authenticated hai. Next step, Aadhaar link setup verify karne ke liye 'verify aadhaar' type karein.";
       } else if (profile.kycStep == 'pan') {
         agentInitialText = "Aadhaar secure verification loop starts... Checking links in background.";
-        triggerTool = "initiate_kyc_step";
+        triggerTool = "start_kyc";
         toolArgs = {'step': 'aadhaar', 'user_confirmed': true};
         agentFinalText = "Aadhaar link verified! ✅ 25 SBI Coins earned. Final KYC checks ke liye Video verification initialize karenge. 'verify video kyc' type karein.";
       } else if (profile.kycStep == 'aadhaar') {
         agentInitialText = "Opening secure Video KYC session interface... Agent online.";
-        triggerTool = "initiate_kyc_step";
+        triggerTool = "start_kyc";
         toolArgs = {'step': 'video_kyc', 'user_confirmed': true};
         agentFinalText = "Video KYC verification completed! 🎉 50 SBI Coins awarded. Your SBI account is now fully active. UPI payment profile setup karne ke liye 'activate upi' type karein.";
       } else if (profile.kycStep == 'video_kyc') {
@@ -438,7 +719,7 @@ Keep your reasoning short and always explain why you are running a tool in chat.
           agentFinalText = "Oops! Aapka balance ₹${profile.balance.toStringAsFixed(2)} insufficient hai. Transfer execute nahi kiya ja sakta.";
         } else {
           agentInitialText = "Theek hai! ₹${amount.toStringAsFixed(0)} $recipient ko send karne ka request process kar raha hun.";
-          triggerTool = "execute_transfer";
+          triggerTool = "transfer_money";
           toolArgs = {'recipient': recipient, 'amount': amount, 'reason': 'Direct Pay from AI Chat'};
           
           final updatedBalance = profile.balance - amount;
@@ -446,8 +727,8 @@ Keep your reasoning short and always explain why you are running a tool in chat.
         }
       } else if (query.contains('sip') || query.contains('mutual fund') || query.contains('invest')) {
         agentInitialText = "SIP missed check trigger. Main SBI Mutual Fund setup utility verify kar raha hun...";
-        triggerTool = "suggest_service_activation";
-        toolArgs = {'service_id': 'srv_sip', 'reason': 'Resume June SIP - AI Insight'};
+        triggerTool = "resume_sip";
+        toolArgs = {'reason': 'Resume June SIP - AI Insight'};
         agentFinalText = "June SBI Bluechip Mutual Fund SIP successfully restored! ✅ 50 SBI Coins awarded. Streak 🔥 status active.";
       } else if (query.contains('fd') || query.contains('fixed deposit') || query.contains('saving')) {
         const amount = 50000.0;
@@ -456,8 +737,8 @@ Keep your reasoning short and always explain why you are running a tool in chat.
           agentFinalText = "Insufficient funds. Fixed Deposit start karne ke liye minimum ₹50,000 balance require hai.";
         } else {
           agentInitialText = "Idle balance detected. ₹50,000 savings account se Fixed Deposit account mein shift kar raha hun at 7.2% secure interest.";
-          triggerTool = "suggest_service_activation";
-          toolArgs = {'service_id': 'srv_fd', 'reason': 'Allocate idle balance to FD'};
+          triggerTool = "move_to_fd";
+          toolArgs = {'amount': amount, 'reason': 'Allocate idle balance to FD'};
           
           final updatedBalance = profile.balance - amount;
           agentFinalText = "Fixed Deposit successfully initialized! ✅ ₹50,000 locked. 50 Coins earned. Remaining balance: ₹${updatedBalance.toStringAsFixed(2)}.";
@@ -488,7 +769,9 @@ Keep your reasoning short and always explain why you are running a tool in chat.
 
     // Phase 1: Output agent's initial thoughts/intent
     if (agentInitialText.isNotEmpty) {
+      agentState.setLastAgentMessage(agentInitialText);
       _addMessageToUI('agent', agentInitialText);
+      _ref.read(voiceServiceProvider).speak(agentInitialText);
     }
 
     // Phase 2: Execute simulated tool calling sequence
@@ -497,24 +780,116 @@ Keep your reasoning short and always explain why you are running a tool in chat.
       _addMessageToUI('system', "Agent executing tool (simulated): $triggerTool...", toolCall: {'name': triggerTool, 'args': toolArgs});
       
       await Future.delayed(const Duration(milliseconds: 1000));
-      final output = await ToolDispatcher.dispatch(_ref, triggerTool, toolArgs);
+      final output = await _executeTool(triggerTool, toolArgs);
       
-      _addMessageToUI('tool', "Agent completed $triggerTool ✅", toolCall: {'output': output});
+      if (output['status'] == 'failed' || output['status'] == 'error') {
+        final reason = output['reason'] ?? 'Tool call failed';
+        _addMessageToUI('tool', "Agent tool $triggerTool failed ❌: $reason", toolCall: {'output': output});
+      } else {
+        _addMessageToUI('tool', "Agent completed $triggerTool ✅", toolCall: {'output': output});
+      }
       
       // Phase 3: Output final response reflecting the updated state
       if (agentFinalText.isNotEmpty) {
         await Future.delayed(const Duration(milliseconds: 600));
+        agentState.setLastAgentMessage(agentFinalText);
         _addMessageToUI('agent', agentFinalText);
+        _ref.read(voiceServiceProvider).speak(agentFinalText);
       }
     } else {
       // Direct reply without tool execution
       if (agentFinalText.isNotEmpty) {
         await Future.delayed(const Duration(milliseconds: 400));
+        agentState.setLastAgentMessage(agentFinalText);
         _addMessageToUI('agent', agentFinalText);
+        _ref.read(voiceServiceProvider).speak(agentFinalText);
       }
     }
 
     state = state.copyWith(isThinking: false);
+    if (agentState.state.status != AgentStatus.error) {
+      agentState.setStatus(AgentStatus.idle);
+    }
+  }
+
+  Future<void> simulateAgentResponse(String text) async {
+    final agentState = _ref.read(agentStateProvider.notifier);
+    state = state.copyWith(isThinking: true);
+    agentState.setStatus(AgentStatus.thinking);
+    
+    // Simulate short thinking delay
+    await Future.delayed(const Duration(milliseconds: 600));
+    
+    state = state.copyWith(isThinking: false);
+    agentState.setLastAgentMessage(text);
+    _addMessageToUI('agent', text);
+    
+    // Speak the response
+    await _ref.read(voiceServiceProvider).speak(text);
+    
+    if (agentState.state.status != AgentStatus.error) {
+      agentState.setStatus(AgentStatus.idle);
+    }
+  }
+
+  void _triggerProactiveWelcome() async {
+    final profile = _ref.read(userProfileProvider);
+    final memory = _ref.read(agentMemoryProvider);
+    final txs = _ref.read(transactionsProvider);
+    final goals = _ref.read(goalsProvider);
+    final recs = _ref.read(recommendationsProvider);
+    final timeline = _ref.read(timelineProvider.notifier);
+    final memoryNotifier = _ref.read(agentMemoryProvider.notifier);
+
+    // 1. Greet the user once per session or profile swap
+    if (memory.lastWelcomeMessage == null || memory.lastSeenProfile != profile.name) {
+      final greeting = RetentionRules.getGreeting(profile.name, profile.name == 'Rohan' ? 'A' : 'B', memory.lastWelcomeMessage);
+      
+      memoryNotifier.updateProactiveState(
+        lastWelcomeMessage: greeting,
+        lastSeenProfile: profile.name,
+      );
+
+      timeline.log(
+        type: TimelineEntryType.insight,
+        title: 'Agent Welcome Prompted',
+        description: greeting,
+        status: TimelineEntryStatus.info,
+      );
+
+      await Future.delayed(const Duration(milliseconds: 1000));
+      simulateAgentResponse(greeting);
+      return;
+    }
+
+    // 2. Proactively alert on a critical Next Best Action if not spammed
+    final action = ProactiveAgentEngine.determineNextBestAction(
+      profile: profile,
+      transactions: txs,
+      goals: goals,
+      memory: memory,
+      recommendations: recs,
+    );
+
+    if (action.type != NextBestActionType.healthSummary && action.type != NextBestActionType.goalNudge) {
+      if (memory.lastProactiveSuggestion != action.id) {
+        memoryNotifier.updateProactiveState(
+          lastProactiveSuggestion: action.id,
+          lastRecommendationTimestamp: DateTime.now().millisecondsSinceEpoch,
+        );
+
+        timeline.log(
+          type: TimelineEntryType.recommendation,
+          title: 'Agent Proactive Alert: ${action.title}',
+          description: '${action.subtitle} (Reason: ${action.aiReason})',
+          status: TimelineEntryStatus.info,
+        );
+
+        final alertText = "SBI Proactive Alert: I noticed ${action.title.toLowerCase()}. ${action.subtitle}";
+        await Future.delayed(const Duration(milliseconds: 1200));
+        simulateAgentResponse(alertText);
+      }
+    }
   }
 
   void updateApiKey(String key) {

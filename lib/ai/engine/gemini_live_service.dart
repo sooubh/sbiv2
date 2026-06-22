@@ -12,6 +12,7 @@ class GeminiLiveService {
   Timer? _watchdogTimer;
   Timer? _interruptionTimer;
   String? _sessionId; // For session resumption
+  bool _isSessionRestored = false;
 
   // Callback interfaces
   void Function(String text)? onMessageReceived;
@@ -19,8 +20,14 @@ class GeminiLiveService {
   void Function(String error)? onError;
   void Function()? onDisconnected;
   void Function()? onConnected;
+  
+  // Reconnect stability callbacks
+  void Function()? onReconnectStarted;
+  void Function()? onReconnectSuccess;
+  void Function(String error)? onReconnectFailed;
 
   bool get isConnected => _isConnected;
+  bool get isSessionRestored => _isSessionRestored;
 
   Future<bool> connect({
     required String apiKey,
@@ -39,8 +46,14 @@ class GeminiLiveService {
 
       _webSocket = await WebSocket.connect(wsUrl.toString()).timeout(const Duration(seconds: 10));
       _isConnected = true;
+      _isSessionRestored = false;
+
+      if (_reconnectAttempts > 0) {
+        onReconnectSuccess?.call();
+      } else {
+        onConnected?.call();
+      }
       _reconnectAttempts = 0;
-      onConnected?.call();
 
       // Send Setup Payload
       final setupPayload = {
@@ -132,9 +145,12 @@ class GeminiLiveService {
     try {
       final json = jsonDecode(rawData as String);
 
-      // Save session ID if provided for session resumption
-      if (json['setupComplete'] != null && json['setupComplete']['sessionId'] != null) {
-        _sessionId = json['setupComplete']['sessionId'];
+      if (json['setupComplete'] != null) {
+        final setupComplete = json['setupComplete'];
+        if (setupComplete['sessionId'] != null) {
+          _sessionId = setupComplete['sessionId'];
+        }
+        _isSessionRestored = setupComplete['sessionResumption'] == true;
       }
 
       if (json['serverContent'] != null) {
@@ -168,10 +184,10 @@ class GeminiLiveService {
     }
   }
 
-  // Stability requirement: Watchdog timer - if no serverContent in 8 seconds, send empty nudge
+  // Stability requirement: Watchdog timer - if no serverContent in 20 seconds, send empty nudge
   void _startWatchdog() {
     _watchdogTimer?.cancel();
-    _watchdogTimer = Timer(const Duration(seconds: 8), () {
+    _watchdogTimer = Timer(const Duration(seconds: 20), () {
       if (_isConnected) {
         // Send a soft nudge payload
         final nudgePayload = {
@@ -208,6 +224,10 @@ class GeminiLiveService {
 
   // Stability requirement: Auto-reconnect with backoff
   void _handleDisconnect(String apiKey, String systemInstruction, List<Map<String, dynamic>> tools) {
+    if (!_isConnected) {
+      return;
+    }
+
     _isConnected = false;
     _resetWatchdog();
     _interruptionTimer?.cancel();
@@ -215,14 +235,23 @@ class GeminiLiveService {
     _webSocket?.close();
     onDisconnected?.call();
 
+    _reconnectAttempts = 0;
+    _startReconnect(apiKey, systemInstruction, tools);
+  }
+
+  void _startReconnect(String apiKey, String systemInstruction, List<Map<String, dynamic>> tools) {
     if (_reconnectAttempts < _maxReconnectAttempts) {
       _reconnectAttempts++;
+      onReconnectStarted?.call();
       final delay = Duration(seconds: _reconnectAttempts * 2); // Exponential backoff: 2s, 4s, 6s
-      Timer(delay, () {
-        connect(apiKey: apiKey, systemInstruction: systemInstruction, tools: tools);
+      Timer(delay, () async {
+        final success = await connect(apiKey: apiKey, systemInstruction: systemInstruction, tools: tools);
+        if (!success) {
+          _startReconnect(apiKey, systemInstruction, tools);
+        }
       });
     } else {
-      _triggerError("Max connection attempts reached. Switching to REST fallback.");
+      onReconnectFailed?.call("Max connection attempts reached. Switch to REST.");
     }
   }
 
@@ -232,6 +261,7 @@ class GeminiLiveService {
 
   void disconnect() {
     _isConnected = false;
+    _reconnectAttempts = 0;
     _resetWatchdog();
     _interruptionTimer?.cancel();
     _subscription?.cancel();

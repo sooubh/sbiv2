@@ -5,6 +5,13 @@ import 'package:sbiv2/core/theme/app_theme.dart';
 import 'package:sbiv2/data/repositories/state_providers.dart';
 import 'package:sbiv2/ai/engine/ai_coordinator.dart';
 import 'package:sbiv2/ai/engine/pattern_engine.dart';
+import 'package:sbiv2/ai/voice/voice_service.dart';
+import 'package:sbiv2/ai/voice/voice_state.dart';
+import 'package:sbiv2/features/agent/widgets/agent_timeline.dart';
+import 'package:sbiv2/ai/behavior/next_best_action.dart';
+import 'package:sbiv2/ai/behavior/proactive_agent_engine.dart';
+import 'package:sbiv2/ai/memory/agent_memory.dart';
+import 'package:sbiv2/features/agent/models/timeline_entry.dart';
 
 class AiChatScreen extends ConsumerStatefulWidget {
   const AiChatScreen({super.key});
@@ -16,6 +23,15 @@ class AiChatScreen extends ConsumerStatefulWidget {
 class _AiChatScreenState extends ConsumerState<AiChatScreen> {
   final TextEditingController _textController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialise VoiceService after first frame so Riverpod ref is ready.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(voiceServiceProvider).initialize();
+    });
+  }
 
   @override
   void dispose() {
@@ -181,6 +197,9 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
           ),
         ),
 
+        // Proactive suggestion banner
+        _buildProactiveBanner(context, ref),
+
         // Chat Message History
         Expanded(
           child: ListView.builder(
@@ -235,50 +254,240 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
           ),
         ),
 
-        // Input Bar
+        // ── Collapsible Agent Timeline ───────────────────────────────────────
+        Consumer(
+          builder: (context, ref, _) {
+            final entries = ref.watch(timelineProvider);
+            return Theme(
+              // Remove ExpansionTile's default divider lines
+              data: Theme.of(context).copyWith(
+                dividerColor: Colors.transparent,
+              ),
+              child: ExpansionTile(
+                tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+                childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                backgroundColor: AppTheme.background,
+                collapsedBackgroundColor: AppTheme.background,
+                leading: const Icon(Icons.history, color: AppTheme.aiTeal, size: 18),
+                title: Row(
+                  children: [
+                    Text(
+                      'Agent Timeline',
+                      style: GoogleFonts.poppins(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: AppTheme.aiTeal.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '${entries.length}',
+                        style: GoogleFonts.inter(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.aiTeal,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                children: [
+                  AgentTimeline(entries: entries),
+                ],
+              ),
+            );
+          },
+        ),
+
+        // ── TTS Speaking Banner ──────────────────────────────────────────────
+        Consumer(
+          builder: (context, ref, _) {
+            final voice = ref.watch(voiceStateProvider);
+            final isSpeaking = voice.status == VoiceStatus.speaking;
+            final isPaused = voice.isPaused;
+            final hasError = voice.status == VoiceStatus.error;
+
+            if (!isSpeaking && !hasError) return const SizedBox.shrink();
+
+            if (hasError) {
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                color: Colors.red.shade50,
+                child: Row(
+                  children: [
+                    const Icon(Icons.mic_off, color: Colors.red, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        voice.error ?? 'Voice unavailable. Using text input.',
+                        style: GoogleFonts.inter(fontSize: 11, color: Colors.red),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () => ref.read(voiceStateProvider.notifier).clearError(),
+                      child: const Icon(Icons.close, size: 16, color: Colors.red),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            // Speaking state pill
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: AppTheme.aiTeal.withValues(alpha: 0.08),
+              child: Row(
+                children: [
+                  const Icon(Icons.volume_up, color: AppTheme.aiTeal, size: 16),
+                  const SizedBox(width: 8),
+                  Text(
+                    isPaused ? 'Agent paused' : 'Agent speaking…',
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      color: AppTheme.aiTeal,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  // Pause / Resume toggle
+                  GestureDetector(
+                    onTap: () {
+                      final svc = ref.read(voiceServiceProvider);
+                      if (isPaused) {
+                        svc.resumeSpeaking();
+                      } else {
+                        svc.pauseSpeaking();
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppTheme.aiTeal.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        isPaused ? 'Resume' : 'Pause',
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.aiTeal,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Stop speaking
+                  GestureDetector(
+                    onTap: () => ref.read(voiceServiceProvider).stopSpeaking(),
+                    child: const Icon(Icons.stop_circle_outlined,
+                        color: AppTheme.aiTeal, size: 20),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+
+        // ── Input Bar ────────────────────────────────────────────────────────
         Container(
           padding: const EdgeInsets.all(12),
           decoration: const BoxDecoration(
             color: Colors.white,
             border: Border(top: BorderSide(color: AppTheme.border)),
           ),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _textController,
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (val) => _submitMessage(val.trim()),
-                  decoration: InputDecoration(
-                    hintText: 'Type: "mom ko 2000 bhej do"...',
-                    hintStyle: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 13),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                    filled: true,
-                    fillColor: AppTheme.background,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(24),
-                      borderSide: BorderSide.none,
+          child: Consumer(
+            builder: (context, ref, _) {
+              final voice = ref.watch(voiceStateProvider);
+              final isListening = voice.status == VoiceStatus.listening;
+              final isSpeaking = voice.status == VoiceStatus.speaking;
+              final sttAvailable = voice.sttAvailable;
+
+              return Row(
+                children: [
+                  // ── Mic button ──────────────────────────────────────────
+                  if (sttAvailable)
+                    GestureDetector(
+                      onTap: () {
+                        final svc = ref.read(voiceServiceProvider);
+                        if (isListening) {
+                          svc.cancelListening();
+                        } else if (!isSpeaking) {
+                          svc.startListening();
+                        }
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        padding: const EdgeInsets.all(10),
+                        margin: const EdgeInsets.only(right: 8),
+                        decoration: BoxDecoration(
+                          color: isListening
+                              ? Colors.red.shade50
+                              : AppTheme.background,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: isListening
+                                ? Colors.red
+                                : AppTheme.border,
+                          ),
+                        ),
+                        child: Icon(
+                          isListening ? Icons.mic : Icons.mic_none,
+                          color: isListening ? Colors.red : AppTheme.textSecondary,
+                          size: 20,
+                        ),
+                      ),
+                    ),
+
+                  // ── Text Field ──────────────────────────────────────────
+                  Expanded(
+                    child: TextField(
+                      controller: _textController,
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: (val) => _submitMessage(val.trim()),
+                      decoration: InputDecoration(
+                        hintText: sttAvailable
+                            ? 'Type or tap mic to speak…'
+                            : 'Type: "mom ko 2000 bhej do"…',
+                        hintStyle: GoogleFonts.inter(
+                            color: AppTheme.textSecondary, fontSize: 13),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 10),
+                        filled: true,
+                        fillColor: AppTheme.background,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(24),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: () => _submitMessage(_textController.text.trim()),
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: const BoxDecoration(
-                    color: AppTheme.primary,
-                    shape: BoxShape.circle,
+                  const SizedBox(width: 8),
+
+                  // ── Send button ─────────────────────────────────────────
+                  GestureDetector(
+                    onTap: () => _submitMessage(_textController.text.trim()),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: const BoxDecoration(
+                        color: AppTheme.primary,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.send,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ),
                   ),
-                  child: const Icon(
-                    Icons.send,
-                    color: Colors.white,
-                    size: 18,
-                  ),
-                ),
-              ),
-            ],
+                ],
+              );
+            },
           ),
         ),
       ],
@@ -396,6 +605,115 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
                   ),
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProactiveBanner(BuildContext context, WidgetRef ref) {
+    final profile = ref.watch(userProfileProvider);
+    final txs = ref.watch(transactionsProvider);
+    final goals = ref.watch(goalsProvider);
+    final recs = ref.watch(recommendationsProvider);
+    final memory = ref.watch(agentMemoryProvider);
+
+    final action = ProactiveAgentEngine.determineNextBestAction(
+      profile: profile,
+      transactions: txs,
+      goals: goals,
+      memory: memory,
+      recommendations: recs,
+    );
+
+    if (action.type == NextBestActionType.healthSummary) {
+      return const SizedBox.shrink();
+    }
+
+    Color bannerColor = AppTheme.aiTeal;
+    if (action.type == NextBestActionType.kyc || action.type == NextBestActionType.lowBalance) {
+      bannerColor = AppTheme.accentOrange;
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: bannerColor.withValues(alpha: 0.1),
+        border: Border(bottom: BorderSide(color: bannerColor.withValues(alpha: 0.3), width: 1)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.lightbulb_outline, color: bannerColor, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "Suggestion: ${action.title}",
+                  style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                ),
+                Text(
+                  "Why: ${action.aiReason}",
+                  style: GoogleFonts.inter(fontSize: 10, color: AppTheme.textSecondary),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton(
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              backgroundColor: bannerColor,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () {
+              ref.read(timelineProvider.notifier).log(
+                type: TimelineEntryType.toolCompleted,
+                title: 'Accepted via Chat: ${action.title}',
+                description: 'User initiated solution directly from the chat banner.',
+                status: TimelineEntryStatus.success,
+              );
+
+              ref.read(agentMemoryProvider.notifier).updateCooldown(action.type.name, DateTime.now().millisecondsSinceEpoch);
+
+              if (action.type == NextBestActionType.kyc) {
+                ref.read(currentNavIndexProvider.notifier).state = 1; // Go to KYC
+              } else if (action.type == NextBestActionType.healthSummary) {
+                ref.read(currentNavIndexProvider.notifier).state = 3;
+              } else {
+                switch (action.type) {
+                  case NextBestActionType.sip:
+                    _submitMessage("Resume SIP");
+                    break;
+                  case NextBestActionType.lowBalance:
+                    _submitMessage("Check Balance");
+                    break;
+                  case NextBestActionType.fd:
+                    _submitMessage("Open FD");
+                    break;
+                  case NextBestActionType.salarySave:
+                    _submitMessage("Boost Goal");
+                    break;
+                  case NextBestActionType.spendingSpike:
+                    _submitMessage("Review spending spike");
+                    break;
+                  case NextBestActionType.goalNudge:
+                    _submitMessage("Boost goal");
+                    break;
+                  default:
+                    break;
+                }
+              }
+            },
+            child: Text(
+              "Start",
+              style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
             ),
           ),
         ],
