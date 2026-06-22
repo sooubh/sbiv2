@@ -20,6 +20,7 @@ class GeminiLiveService {
   void Function(String error)? onError;
   void Function()? onDisconnected;
   void Function()? onConnected;
+  void Function(String sessionId)? onSessionIdReceived;
   
   // Reconnect stability callbacks
   void Function()? onReconnectStarted;
@@ -28,11 +29,13 @@ class GeminiLiveService {
 
   bool get isConnected => _isConnected;
   bool get isSessionRestored => _isSessionRestored;
+  String? get sessionId => _sessionId;
 
   Future<bool> connect({
     required String apiKey,
     required String systemInstruction,
     required List<Map<String, dynamic>> tools,
+    required String model,
   }) async {
     if (apiKey.isEmpty) {
       _triggerError("Gemini API key is required");
@@ -58,7 +61,7 @@ class GeminiLiveService {
       // Send Setup Payload
       final setupPayload = {
         'setup': {
-          'model': 'models/gemini-2.0-flash-live-001',
+          'model': model,
           'generationConfig': {
             'responseModalities': ['TEXT'],
           },
@@ -82,10 +85,10 @@ class GeminiLiveService {
         },
         onError: (err) {
           _triggerError("WebSocket error: $err");
-          _handleDisconnect(apiKey, systemInstruction, tools);
+          _handleDisconnect(apiKey, systemInstruction, tools, model);
         },
         onDone: () {
-          _handleDisconnect(apiKey, systemInstruction, tools);
+          _handleDisconnect(apiKey, systemInstruction, tools, model);
         },
         cancelOnError: true,
       );
@@ -149,6 +152,7 @@ class GeminiLiveService {
         final setupComplete = json['setupComplete'];
         if (setupComplete['sessionId'] != null) {
           _sessionId = setupComplete['sessionId'];
+          onSessionIdReceived?.call(_sessionId!);
         }
         _isSessionRestored = setupComplete['sessionResumption'] == true;
       }
@@ -223,7 +227,7 @@ class GeminiLiveService {
   }
 
   // Stability requirement: Auto-reconnect with backoff
-  void _handleDisconnect(String apiKey, String systemInstruction, List<Map<String, dynamic>> tools) {
+  void _handleDisconnect(String apiKey, String systemInstruction, List<Map<String, dynamic>> tools, String model) {
     if (!_isConnected) {
       return;
     }
@@ -236,18 +240,18 @@ class GeminiLiveService {
     onDisconnected?.call();
 
     _reconnectAttempts = 0;
-    _startReconnect(apiKey, systemInstruction, tools);
+    _startReconnect(apiKey, systemInstruction, tools, model);
   }
 
-  void _startReconnect(String apiKey, String systemInstruction, List<Map<String, dynamic>> tools) {
+  void _startReconnect(String apiKey, String systemInstruction, List<Map<String, dynamic>> tools, String model) {
     if (_reconnectAttempts < _maxReconnectAttempts) {
       _reconnectAttempts++;
       onReconnectStarted?.call();
       final delay = Duration(seconds: _reconnectAttempts * 2); // Exponential backoff: 2s, 4s, 6s
       Timer(delay, () async {
-        final success = await connect(apiKey: apiKey, systemInstruction: systemInstruction, tools: tools);
+        final success = await connect(apiKey: apiKey, systemInstruction: systemInstruction, tools: tools, model: model);
         if (!success) {
-          _startReconnect(apiKey, systemInstruction, tools);
+          _startReconnect(apiKey, systemInstruction, tools, model);
         }
       });
     } else {

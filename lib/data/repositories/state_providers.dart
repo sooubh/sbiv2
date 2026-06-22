@@ -533,4 +533,47 @@ final timelineProvider =
   return TimelineNotifier();
 });
 
+class AiModelConfig {
+  final String liveModel;
+  final String restModel;
+
+  const AiModelConfig({
+    required this.liveModel,
+    required this.restModel,
+  });
+
+  AiModelConfig copyWith({
+    String? liveModel,
+    String? restModel,
+  }) {
+    return AiModelConfig(
+      liveModel: liveModel ?? this.liveModel,
+      restModel: restModel ?? this.restModel,
+    );
+  }
+}
+
+class AiModelConfigNotifier extends StateNotifier<AiModelConfig> {
+  AiModelConfigNotifier() : super(const AiModelConfig(
+    liveModel: 'models/gemini-2.0-flash-live-001',
+    restModel: 'gemini-2.0-flash',
+  )) {
+    final box = Hive.box(kSystemBox);
+    final savedLive = box.get('ai_live_model', defaultValue: 'models/gemini-2.0-flash-live-001');
+    final savedRest = box.get('ai_rest_model', defaultValue: 'gemini-2.0-flash');
+    state = AiModelConfig(liveModel: savedLive, restModel: savedRest);
+  }
+
+  void updateModels({String? liveModel, String? restModel}) {
+    state = state.copyWith(liveModel: liveModel, restModel: restModel);
+    final box = Hive.box(kSystemBox);
+    if (liveModel != null) box.put('ai_live_model', liveModel);
+    if (restModel != null) box.put('ai_rest_model', restModel);
+  }
+}
+
+final aiModelConfigProvider = StateNotifierProvider<AiModelConfigNotifier, AiModelConfig>((ref) {
+  return AiModelConfigNotifier();
+});
+
 final currentNavIndexProvider = StateProvider<int>((ref) => 0);

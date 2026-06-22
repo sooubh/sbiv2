@@ -145,6 +145,12 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
       state = state.copyWith(mode: AIServiceMode.simulated, error: "No API Key. Running in simulated mode.");
       agentState.setConnectionStatus("disconnected");
       agentState.setStatus(AgentStatus.idle);
+      agentState.updateTransportInfo(
+        transportType: "simulated",
+        webSocketStatus: "disconnected",
+        restStatus: "inactive",
+        decisionSource: "Local Rule Engine",
+      );
       _triggerProactiveWelcome();
       return;
     }
@@ -152,6 +158,12 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
     state = state.copyWith(isConnecting: true, error: null);
     agentState.setConnectionStatus("connecting");
     agentState.setStatus(AgentStatus.reconnecting);
+    agentState.updateTransportInfo(
+      transportType: "live",
+      webSocketStatus: "connecting",
+      restStatus: "inactive",
+      decisionSource: "Gemini Live",
+    );
 
     final sysPrompt = _buildSystemPrompt();
     final tools = _getToolDeclarations();
@@ -163,6 +175,12 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
       state = state.copyWith(mode: AIServiceMode.live, isConnecting: false, isThinking: false);
       agentState.setConnectionStatus("connected");
       agentState.setStatus(AgentStatus.idle);
+      agentState.updateTransportInfo(
+        transportType: "live",
+        webSocketStatus: "connected",
+        restStatus: "inactive",
+        decisionSource: "Gemini Live",
+      );
       eventNotifier.emit(AgentEventType.connected, "Connected to Gemini Live");
       _ref.read(timelineProvider.notifier).log(
         type: TimelineEntryType.connection,
@@ -186,6 +204,12 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
     _liveService.onReconnectStarted = () {
       agentState.setConnectionStatus("reconnecting");
       agentState.setStatus(AgentStatus.reconnecting);
+      agentState.updateTransportInfo(
+        transportType: "live",
+        webSocketStatus: "connecting",
+        restStatus: "inactive",
+        decisionSource: "Gemini Live",
+      );
       eventNotifier.emit(AgentEventType.reconnectStarted, "Gemini Live disconnected. Reconnecting...");
       _ref.read(timelineProvider.notifier).log(
         type: TimelineEntryType.connection,
@@ -199,6 +223,12 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
       state = state.copyWith(mode: AIServiceMode.live, isConnecting: false, isThinking: false);
       agentState.setConnectionStatus("connected");
       agentState.setStatus(AgentStatus.idle);
+      agentState.updateTransportInfo(
+        transportType: "live",
+        webSocketStatus: "connected",
+        restStatus: "inactive",
+        decisionSource: "Gemini Live",
+      );
       
       final isRestored = _liveService.isSessionRestored;
       eventNotifier.emit(
@@ -217,8 +247,14 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
     };
 
     _liveService.onReconnectFailed = (err) {
-      agentState.setConnectionStatus("disconnected");
-      agentState.setError(err);
+      final prevError = agentState.state.lastError ?? err;
+      agentState.recoverToRest(prevError);
+      agentState.updateTransportInfo(
+        transportType: "rest",
+        webSocketStatus: "error",
+        restStatus: "active",
+        decisionSource: "Gemini REST",
+      );
       eventNotifier.emit(AgentEventType.reconnectFailed, "Reconnection failed: $err");
       _ref.read(timelineProvider.notifier).log(
         type: TimelineEntryType.connection,
@@ -257,6 +293,12 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
     _liveService.onError = (err) {
       if (kDebugMode) print("Live error: $err");
       agentState.setError(err);
+      agentState.updateTransportInfo(
+        transportType: agentState.state.transportType,
+        webSocketStatus: "error",
+        restStatus: agentState.state.restStatus,
+        decisionSource: agentState.state.decisionSource,
+      );
       eventNotifier.emit(AgentEventType.error, "Gemini Live error: $err");
     };
 
@@ -264,17 +306,29 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
       eventNotifier.emit(AgentEventType.disconnected, "Gemini Live connection lost");
     };
 
+    _liveService.onSessionIdReceived = (sessionId) {
+      agentState.setSessionId(sessionId);
+    };
+
+    final modelConfig = _ref.read(aiModelConfigProvider);
     final connected = await _liveService.connect(
       apiKey: apiKey,
       systemInstruction: sysPrompt,
       tools: tools,
+      model: modelConfig.liveModel,
     );
 
     if (!connected) {
       // Try REST
       state = state.copyWith(mode: AIServiceMode.rest, isConnecting: false);
-      agentState.setConnectionStatus("connected"); // REST fallback is considered active
-      agentState.setStatus(AgentStatus.idle);
+      final prevError = agentState.state.lastError ?? "WebSocket connect failed";
+      agentState.recoverToRest(prevError);
+      agentState.updateTransportInfo(
+        transportType: "rest",
+        webSocketStatus: "error",
+        restStatus: "active",
+        decisionSource: "Gemini REST",
+      );
       eventNotifier.emit(AgentEventType.disconnected, "Gemini Live initial connect failed. REST fallback active.");
     }
   }
@@ -568,12 +622,14 @@ BEHAVIOR RULES:
       ]
     });
 
+    final modelConfig = _ref.read(aiModelConfigProvider);
     try {
       final response = await _restService.generateContent(
         apiKey: apiKey,
         systemInstruction: sysPrompt,
         contents: _restHistory,
         tools: tools,
+        model: modelConfig.restModel,
       );
 
       final candidate = response['candidates']?[0];
@@ -622,6 +678,7 @@ BEHAVIOR RULES:
               systemInstruction: sysPrompt,
               contents: _restHistory,
               tools: tools,
+              model: modelConfig.restModel,
             );
             final followUpCandidate = followUpResponse['candidates']?[0];
             final followUpMsg = followUpCandidate?['content'];
@@ -642,6 +699,13 @@ BEHAVIOR RULES:
     } catch (e) {
       if (kDebugMode) print("REST error: $e");
       state = state.copyWith(mode: AIServiceMode.simulated, error: "REST API failed: $e. Switched to Simulation Mode.");
+      agentState.setConnectionStatus("disconnected");
+      agentState.updateTransportInfo(
+        transportType: "simulated",
+        webSocketStatus: "error",
+        restStatus: "error",
+        decisionSource: "Local Rule Engine",
+      );
       await _sendSimulatedMessage(text);
       return;
     } finally {

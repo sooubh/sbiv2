@@ -8,6 +8,7 @@ import 'package:sbiv2/ai/agent/agent_state.dart';
 import 'package:sbiv2/ai/voice/voice_state.dart';
 import 'package:sbiv2/features/splash/splash_screen.dart';
 import 'package:sbiv2/features/settings/debug_simulation_page.dart';
+import 'package:sbiv2/features/settings/ai_testing_lab_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -18,17 +19,24 @@ class SettingsScreen extends ConsumerStatefulWidget {
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   late TextEditingController _apiKeyController;
+  late TextEditingController _liveModelController;
+  late TextEditingController _restModelController;
 
   @override
   void initState() {
     super.initState();
     final apiKey = ref.read(geminiApiKeyProvider);
+    final modelConfig = ref.read(aiModelConfigProvider);
     _apiKeyController = TextEditingController(text: apiKey);
+    _liveModelController = TextEditingController(text: modelConfig.liveModel);
+    _restModelController = TextEditingController(text: modelConfig.restModel);
   }
 
   @override
   void dispose() {
     _apiKeyController.dispose();
+    _liveModelController.dispose();
+    _restModelController.dispose();
     super.dispose();
   }
 
@@ -50,7 +58,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     String connectionStatus = agentState.connectionStatus.toUpperCase();
     Color connectionColor = AppTheme.textSecondary;
-    if (connectionStatus == "CONNECTED") {
+    if (connectionStatus == "CONNECTED" || connectionStatus == "REST_ACTIVE") {
       connectionColor = AppTheme.accentGreen;
     } else if (connectionStatus == "CONNECTING") {
       connectionColor = Colors.amber;
@@ -128,6 +136,72 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 24),
 
+          // Model Configuration Section
+          Text(
+            'MODEL CONFIGURATION',
+            style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.textSecondary, letterSpacing: 1.0),
+          ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppTheme.border),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Centralized AI Models',
+                  style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: AppTheme.textPrimary),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _liveModelController,
+                  decoration: InputDecoration(
+                    labelText: 'Gemini Live Model',
+                    labelStyle: GoogleFonts.inter(fontSize: 12),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _restModelController,
+                  decoration: InputDecoration(
+                    labelText: 'Gemini REST Model',
+                    labelStyle: GoogleFonts.inter(fontSize: 12),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      ref.read(aiModelConfigProvider.notifier).updateModels(
+                        liveModel: _liveModelController.text.trim(),
+                        restModel: _restModelController.text.trim(),
+                      );
+                      // Re-initialize the active agent coordinator to reconnect with the new models!
+                      ref.read(aiCoordinatorProvider.notifier).updateApiKey(ref.read(geminiApiKeyProvider));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('AI models updated and service re-initialized.'),
+                          backgroundColor: AppTheme.primary,
+                        ),
+                      );
+                    },
+                    child: Text('Save Model Config', style: GoogleFonts.inter(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+
           // Connection Status Card
           Text(
             'ENGINE STATUS & RUNTIME',
@@ -177,6 +251,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
               backgroundColor: AppTheme.aiTeal,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            icon: const Icon(Icons.science),
+            label: Text('Open AI Testing Lab', style: GoogleFonts.inter(fontWeight: FontWeight.bold)),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const AITestingLabScreen()),
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primary,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 14),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),

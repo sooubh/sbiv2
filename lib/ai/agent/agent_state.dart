@@ -18,12 +18,18 @@ enum AgentMode {
 class AgentState {
   final AgentStatus status;
   final AgentMode mode;
-  final String connectionStatus; // "connected", "disconnected", "connecting"
+  final String connectionStatus; // "connected", "disconnected", "connecting", "REST_ACTIVE"
   final String? lastToolName;
   final String? lastAgentMessage;
   final String? lastError;
   final bool isSpeaking;
   final bool isExecutingTool;
+  final String? lastWarning;
+  final String transportType; // "live", "rest", "simulated"
+  final String webSocketStatus; // "connected", "disconnected", "connecting", "error"
+  final String restStatus; // "active", "inactive", "error"
+  final String decisionSource; // "Gemini Live", "Gemini REST", "Local Rule Engine"
+  final String? sessionId;
 
   AgentState({
     required this.status,
@@ -34,6 +40,12 @@ class AgentState {
     this.lastError,
     required this.isSpeaking,
     required this.isExecutingTool,
+    this.lastWarning,
+    required this.transportType,
+    required this.webSocketStatus,
+    required this.restStatus,
+    required this.decisionSource,
+    this.sessionId,
   });
 
   AgentState copyWith({
@@ -45,6 +57,12 @@ class AgentState {
     String? lastError,
     bool? isSpeaking,
     bool? isExecutingTool,
+    String? lastWarning,
+    String? transportType,
+    String? webSocketStatus,
+    String? restStatus,
+    String? decisionSource,
+    String? sessionId,
   }) {
     return AgentState(
       status: status ?? this.status,
@@ -52,9 +70,15 @@ class AgentState {
       connectionStatus: connectionStatus ?? this.connectionStatus,
       lastToolName: lastToolName ?? this.lastToolName,
       lastAgentMessage: lastAgentMessage ?? this.lastAgentMessage,
-      lastError: lastError ?? this.lastError,
+      lastError: lastError != null ? (lastError.isEmpty ? null : lastError) : this.lastError,
       isSpeaking: isSpeaking ?? this.isSpeaking,
       isExecutingTool: isExecutingTool ?? this.isExecutingTool,
+      lastWarning: lastWarning ?? this.lastWarning,
+      transportType: transportType ?? this.transportType,
+      webSocketStatus: webSocketStatus ?? this.webSocketStatus,
+      restStatus: restStatus ?? this.restStatus,
+      decisionSource: decisionSource ?? this.decisionSource,
+      sessionId: sessionId != null ? (sessionId.isEmpty ? null : sessionId) : this.sessionId,
     );
   }
 }
@@ -67,6 +91,12 @@ class AgentStateNotifier extends StateNotifier<AgentState> {
           connectionStatus: "disconnected",
           isSpeaking: false,
           isExecutingTool: false,
+          lastWarning: null,
+          transportType: "simulated",
+          webSocketStatus: "disconnected",
+          restStatus: "inactive",
+          decisionSource: "Local Rule Engine",
+          sessionId: null,
         ));
 
   void setStatus(AgentStatus status) {
@@ -76,7 +106,9 @@ class AgentStateNotifier extends StateNotifier<AgentState> {
         return;
       }
       // Reconnecting state is only allowed to transition to idle if the connection is established
-      if (state.status == AgentStatus.reconnecting && state.connectionStatus != "connected") {
+      if (state.status == AgentStatus.reconnecting && 
+          state.connectionStatus != "connected" && 
+          state.connectionStatus != "REST_ACTIVE") {
         return;
       }
       
@@ -84,7 +116,7 @@ class AgentStateNotifier extends StateNotifier<AgentState> {
       state = state.copyWith(
         status: AgentStatus.idle,
         isExecutingTool: false,
-        lastError: null,
+        lastError: "",
       );
       return;
     }
@@ -105,6 +137,12 @@ class AgentStateNotifier extends StateNotifier<AgentState> {
       lastToolName: null,
       lastAgentMessage: null,
       lastError: null,
+      lastWarning: null,
+      transportType: "simulated",
+      webSocketStatus: "disconnected",
+      restStatus: "inactive",
+      decisionSource: "Local Rule Engine",
+      sessionId: null,
     );
   }
 
@@ -116,12 +154,40 @@ class AgentStateNotifier extends StateNotifier<AgentState> {
     state = state.copyWith(connectionStatus: connectionStatus);
   }
 
+  void recoverToRest(String warning) {
+    state = state.copyWith(
+      status: AgentStatus.idle,
+      connectionStatus: "REST_ACTIVE",
+      lastError: "",
+      lastWarning: warning,
+      isExecutingTool: false,
+    );
+  }
+
+  void updateTransportInfo({
+    required String transportType,
+    required String webSocketStatus,
+    required String restStatus,
+    required String decisionSource,
+  }) {
+    state = state.copyWith(
+      transportType: transportType,
+      webSocketStatus: webSocketStatus,
+      restStatus: restStatus,
+      decisionSource: decisionSource,
+    );
+  }
+
+  void setSessionId(String? sessionId) {
+    state = state.copyWith(sessionId: sessionId ?? "");
+  }
+
   void startToolCall(String name) {
     state = state.copyWith(
       status: AgentStatus.executing,
       isExecutingTool: true,
       lastToolName: name,
-      lastError: null,
+      lastError: "",
     );
   }
 
@@ -136,7 +202,7 @@ class AgentStateNotifier extends StateNotifier<AgentState> {
       state = state.copyWith(
         status: AgentStatus.idle,
         isExecutingTool: false,
-        lastError: null,
+        lastError: "",
       );
     }
   }

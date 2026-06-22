@@ -493,21 +493,24 @@ class DebugSimulationPage extends ConsumerWidget {
                       builder: (context) {
                         final agentState = ref.watch(agentStateProvider);
                         final voiceState = ref.watch(voiceStateProvider);
-                        final aiState = ref.watch(aiCoordinatorProvider);
                         final memory = ref.watch(agentMemoryProvider);
 
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Divider(height: 16),
-                            _buildTelemetryRow('Connection ID', 'sbi_session_73c2'),
-                            _buildTelemetryRow('Response Latency', aiState.isThinking ? 'Calculating...' : '820ms'),
+                            _buildTelemetryRow('Connection ID', (agentState.sessionId == null || agentState.sessionId!.isEmpty) ? 'None' : agentState.sessionId!),
                             _buildTelemetryRow('Connection Status', agentState.connectionStatus.toUpperCase()),
-                            _buildTelemetryRow('Agent mode', agentState.mode.name.toUpperCase()),
+                            _buildTelemetryRow('Transport Type', agentState.transportType.toUpperCase()),
+                            _buildTelemetryRow('WebSocket Status', agentState.webSocketStatus.toUpperCase()),
+                            _buildTelemetryRow('REST Status', agentState.restStatus.toUpperCase()),
+                            _buildTelemetryRow('Decision Source', agentState.decisionSource),
+                            _buildTelemetryRow('Agent Mode', agentState.mode.name.toUpperCase()),
                             _buildTelemetryRow('Agent State', agentState.status.name.toUpperCase()),
-                            _buildTelemetryRow('Voice engine status', voiceState.status.name.toUpperCase()),
-                            _buildTelemetryRow('Last Tool called', agentState.lastToolName ?? 'None'),
-                            _buildTelemetryRow('Last error message', agentState.lastError ?? 'None'),
+                            _buildTelemetryRow('Voice Engine Status', voiceState.status.name.toUpperCase()),
+                            _buildTelemetryRow('Last Tool Called', agentState.lastToolName ?? 'None'),
+                            _buildTelemetryRow('Last Warning', agentState.lastWarning ?? 'None'),
+                            _buildTelemetryRow('Last Error Message', agentState.lastError ?? 'None'),
                             const SizedBox(height: 12),
                             Text(
                               'Memory Summary:',

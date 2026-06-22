@@ -49,6 +49,9 @@ class _BottomNavShellState extends ConsumerState<BottomNavShell> {
       statusText = agentState.mode == AgentMode.onboarding 
           ? "Agent Connection: Connected (Onboarding)" 
           : "Agent Connection: Connected";
+    } else if (agentState.connectionStatus == "REST_ACTIVE") {
+      statusColor = AppTheme.accentGreen;
+      statusText = "Agent Connection: REST Fallback Active";
     } else if (agentState.connectionStatus == "connecting") {
       statusColor = Colors.amber;
       statusText = "Agent Connection: Connecting...";

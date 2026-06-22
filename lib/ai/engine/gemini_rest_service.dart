@@ -2,20 +2,19 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class GeminiRestService {
-  final String _modelName = 'gemini-2.0-flash';
-
   Future<Map<String, dynamic>> generateContent({
     required String apiKey,
     required String systemInstruction,
     required List<Map<String, dynamic>> contents,
     required List<Map<String, dynamic>> tools,
+    required String model,
   }) async {
     if (apiKey.isEmpty) {
       throw Exception("Gemini API key is empty");
     }
 
     final url = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/$_modelName:generateContent?key=$apiKey',
+      'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey',
     );
 
     final requestBody = {
