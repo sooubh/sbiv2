@@ -11,6 +11,7 @@ class GeminiLiveService {
   final int _maxReconnectAttempts = 3;
   Timer? _watchdogTimer;
   Timer? _interruptionTimer;
+  Timer? _reconnectTimer;
   String? _sessionId; // For session resumption
   bool _isSessionRestored = false;
 
@@ -43,6 +44,12 @@ class GeminiLiveService {
     }
 
     try {
+      if (kDebugMode) print("[LIVE_CONNECT] Attempting to connect...");
+      _reconnectTimer?.cancel();
+      _subscription?.cancel();
+      _webSocket?.close();
+      _webSocket = null;
+
       final wsUrl = Uri.parse(
         'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=$apiKey',
       );
@@ -51,12 +58,14 @@ class GeminiLiveService {
       _isConnected = true;
       _isSessionRestored = false;
 
+      if (kDebugMode) print("[LIVE_OPEN] WebSocket connected successfully.");
+
       if (_reconnectAttempts > 0) {
         onReconnectSuccess?.call();
       } else {
         onConnected?.call();
       }
-      _reconnectAttempts = 0;
+      // Reconnect attempts should ONLY be reset when setup is fully complete, not just when socket opens.
 
       // Send Setup Payload
       final setupPayload = {
@@ -75,19 +84,23 @@ class GeminiLiveService {
         }
       };
 
+      if (kDebugMode) print("[LIVE_SETUP_SENT] Sending setup payload.");
       _sendPayload(setupPayload);
       _startWatchdog();
 
       _subscription = _webSocket!.listen(
         (data) {
+          if (kDebugMode) print("[LIVE_PAYLOAD] $data");
           _resetWatchdog();
           _handleIncomingMessage(data);
         },
         onError: (err) {
+          if (kDebugMode) print("[LIVE_ERROR] WebSocket error: $err");
           _triggerError("WebSocket error: $err");
           _handleDisconnect(apiKey, systemInstruction, tools, model);
         },
         onDone: () {
+          if (kDebugMode) print("[LIVE_CLOSE] WebSocket closed. Code: ${_webSocket?.closeCode}, Reason: ${_webSocket?.closeReason}");
           _handleDisconnect(apiKey, systemInstruction, tools, model);
         },
         cancelOnError: true,
@@ -149,6 +162,8 @@ class GeminiLiveService {
       final json = jsonDecode(rawData as String);
 
       if (json['setupComplete'] != null) {
+        if (kDebugMode) print("[LIVE_SETUP_COMPLETE] Received setupComplete.");
+        _reconnectAttempts = 0; // Truly connected and setup
         final setupComplete = json['setupComplete'];
         if (setupComplete['sessionId'] != null) {
           _sessionId = setupComplete['sessionId'];
@@ -171,6 +186,7 @@ class GeminiLiveService {
           final parts = serverContent['modelTurn']['parts'] as List;
           for (var part in parts) {
             if (part['text'] != null) {
+              if (kDebugMode) print("[LIVE_MESSAGE] Received text message");
               onMessageReceived?.call(part['text']);
             }
             if (part['functionCall'] != null) {
@@ -235,20 +251,23 @@ class GeminiLiveService {
     _isConnected = false;
     _resetWatchdog();
     _interruptionTimer?.cancel();
+    _reconnectTimer?.cancel();
     _subscription?.cancel();
     _webSocket?.close();
     onDisconnected?.call();
 
-    _reconnectAttempts = 0;
+    // Do NOT reset _reconnectAttempts here, otherwise infinite loop if server drops immediately.
     _startReconnect(apiKey, systemInstruction, tools, model);
   }
 
   void _startReconnect(String apiKey, String systemInstruction, List<Map<String, dynamic>> tools, String model) {
     if (_reconnectAttempts < _maxReconnectAttempts) {
       _reconnectAttempts++;
+      if (kDebugMode) print("[LIVE_RECONNECT] Attempt $_reconnectAttempts of $_maxReconnectAttempts");
       onReconnectStarted?.call();
       final delay = Duration(seconds: _reconnectAttempts * 2); // Exponential backoff: 2s, 4s, 6s
-      Timer(delay, () async {
+      _reconnectTimer?.cancel();
+      _reconnectTimer = Timer(delay, () async {
         final success = await connect(apiKey: apiKey, systemInstruction: systemInstruction, tools: tools, model: model);
         if (!success) {
           _startReconnect(apiKey, systemInstruction, tools, model);
@@ -268,6 +287,7 @@ class GeminiLiveService {
     _reconnectAttempts = 0;
     _resetWatchdog();
     _interruptionTimer?.cancel();
+    _reconnectTimer?.cancel();
     _subscription?.cancel();
     _webSocket?.close();
     _webSocket = null;
