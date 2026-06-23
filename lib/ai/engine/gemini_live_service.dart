@@ -3,6 +3,20 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+/// Models known to be deprecated or shut down.
+/// If a user has one of these persisted in Hive, it will be auto-migrated.
+const kDeprecatedLiveModels = <String>{
+  'models/gemini-2.0-flash-live-001',
+  'models/gemini-live-2.5-flash-preview-native-audio',
+  'models/gemini-2.0-flash-live',
+  'gemini-2.0-flash-live-001',
+  'gemini-live-2.5-flash-preview-native-audio',
+  'gemini-2.0-flash-live',
+};
+
+/// The current recommended Live API model (June 2026).
+const kDefaultLiveModel = 'models/gemini-3.1-flash-live-preview';
+
 class GeminiLiveService {
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
@@ -11,6 +25,7 @@ class GeminiLiveService {
   final bool _isSessionRestored = false;
 
   final Map<String, String> _pendingToolCalls = {};
+  final StringBuffer _responseBuffer = StringBuffer();
 
   // Callback interfaces
   void Function(String text)? onMessageReceived;
@@ -29,6 +44,38 @@ class GeminiLiveService {
   bool get isSessionRestored => _isSessionRestored;
   String? get sessionId => _sessionId;
 
+  /// Validates and normalizes the model name.
+  /// Returns the corrected model string, or replaces deprecated models
+  /// with [kDefaultLiveModel].
+  static String normalizeAndValidateModel(String model) {
+    String normalized = model.trim();
+
+    // Normalize: ensure "models/" prefix
+    if (!normalized.startsWith('models/')) {
+      normalized = 'models/$normalized';
+    }
+
+    // Check for deprecated models
+    if (kDeprecatedLiveModels.contains(normalized) ||
+        kDeprecatedLiveModels.contains(model.trim())) {
+      if (kDebugMode) {
+        print("[LIVE_MODEL] Deprecated model detected: '$model'. "
+            "Auto-migrating to '$kDefaultLiveModel'.");
+      }
+      return kDefaultLiveModel;
+    }
+
+    return normalized;
+  }
+
+  /// Returns true if the given model string is known to be deprecated.
+  static bool isModelDeprecated(String model) {
+    final normalized = model.trim();
+    return kDeprecatedLiveModels.contains(normalized) ||
+        kDeprecatedLiveModels.contains(
+            normalized.startsWith('models/') ? normalized : 'models/$normalized');
+  }
+
   Future<bool> connect({
     required String apiKey,
     required String systemInstruction,
@@ -44,10 +91,10 @@ class GeminiLiveService {
       if (kDebugMode) print("[LIVE_CONNECT] Attempting to connect via WebSocketChannel...");
       disconnect();
 
-      // Normalize model name (Gemini Live API expects "models/model-name")
-      String normalizedModel = model;
-      if (!normalizedModel.startsWith('models/')) {
-        normalizedModel = 'models/$normalizedModel';
+      // Normalize and validate model name
+      final normalizedModel = normalizeAndValidateModel(model);
+      if (kDebugMode) {
+        print("[LIVE_CONNECT] Using model: $normalizedModel (requested: $model)");
       }
 
       final uri = Uri.parse(
@@ -82,13 +129,37 @@ class GeminiLiveService {
         },
       );
 
-      // Immediately send setup configuration
+      // Build the session setup configuration.
+      //
+      // CRITICAL FIX: The Gemini Live API models (gemini-3.1-flash-live-preview
+      // and similar native audio models) do NOT support responseModalities: ["TEXT"].
+      // They are native audio models that require AUDIO as the response modality.
+      //
+      // To receive text output alongside audio, we enable outputAudioTranscription
+      // which provides a synchronized text transcript of the model's audio response.
+      //
+      // Reference: https://ai.google.dev/api/multimodal-live
+      // Error without fix: WebSocket Close Code 1007 —
+      //   "The requested combination of response modalities (TEXT) is not supported
+      //    by the model. models/gemini-3.1-flash-live-preview"
       final setupMessage = {
         "setup": {
           "model": normalizedModel,
           "generationConfig": {
-            "responseModalities": ["TEXT"],
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {
+              "voiceConfig": {
+                "prebuiltVoiceConfig": {
+                  "voiceName": "Puck"
+                }
+              }
+            },
           },
+          // outputAudioTranscription is a top-level field on BidiGenerateContentSetup,
+          // NOT a field of GenerationConfig. It enables text transcripts of audio output
+          // so the app can display text in the UI while using AUDIO response modality.
+          // Reference: https://ai.google.dev/api/live#BidiGenerateContentSetup
+          "outputAudioTranscription": {},
           "systemInstruction": {
             "parts": [
               {"text": systemInstruction}
@@ -104,20 +175,35 @@ class GeminiLiveService {
         }
       };
 
+      if (kDebugMode) {
+        print("[LIVE_CONNECT] Sending setup message for model: $normalizedModel");
+      }
+
       _channel!.sink.add(jsonEncode(setupMessage));
       
       _isConnected = true;
       onConnected?.call();
       return true;
     } catch (e) {
+      if (kDebugMode) print("[LIVE_CONNECT] Failed to connect: $e");
       _triggerError("Failed to connect: $e");
       return false;
     }
   }
 
-  void _handleIncomingMessage(dynamic messageStr) {
+  void _handleIncomingMessage(dynamic message) {
     try {
-      final Map<String, dynamic> data = jsonDecode(messageStr as String);
+      String msgStr;
+      if (message is String) {
+        msgStr = message;
+      } else if (message is List<int>) {
+        msgStr = utf8.decode(message);
+      } else if (message is List) {
+        msgStr = utf8.decode(message.cast<int>());
+      } else {
+        msgStr = utf8.decode(List<int>.from(message as Iterable));
+      }
+      final Map<String, dynamic> data = jsonDecode(msgStr);
       
       // 1. Setup complete
       if (data.containsKey('setupComplete')) {
@@ -134,9 +220,11 @@ class GeminiLiveService {
         }
       }
 
-      // 3. Text output
+      // 3. Server content (model turn with audio, text, or transcription parts)
       if (data.containsKey('serverContent')) {
         final serverContent = data['serverContent'] as Map<String, dynamic>;
+        
+        // 3a. Model turn — may contain inline text parts and/or audio data
         if (serverContent.containsKey('modelTurn')) {
           final modelTurn = serverContent['modelTurn'] as Map<String, dynamic>;
           if (modelTurn.containsKey('parts')) {
@@ -145,10 +233,54 @@ class GeminiLiveService {
               if (part is Map<String, dynamic> && part.containsKey('text')) {
                 final text = part['text'] as String;
                 if (text.isNotEmpty) {
-                  onMessageReceived?.call(text);
+                  _responseBuffer.write(text);
+                }
+              }
+              // Audio data parts (inlineData) are intentionally ignored here
+              // since this app uses text-based UI. The audio stream exists to
+              // satisfy the model's AUDIO response modality requirement.
+            }
+          }
+        }
+
+        // 3b. Output audio transcription — the text transcript of audio output.
+        // This is the primary mechanism for receiving text when using AUDIO modality.
+        if (serverContent.containsKey('outputTranscription')) {
+          final transcription = serverContent['outputTranscription'] as Map<String, dynamic>;
+          
+          final directText = transcription['text'] as String?;
+          if (directText != null && directText.isNotEmpty) {
+            _responseBuffer.write(directText);
+          } else if (transcription.containsKey('parts')) {
+            final parts = transcription['parts'] as List;
+            for (final part in parts) {
+              if (part is Map<String, dynamic> && part.containsKey('text')) {
+                final text = part['text'] as String;
+                if (text.isNotEmpty) {
+                  _responseBuffer.write(text);
                 }
               }
             }
+          }
+        }
+
+        // 3c. Interrupt detection
+        final isInterrupted = serverContent['interrupted'] as bool? ?? false;
+        if (isInterrupted) {
+          _responseBuffer.clear();
+        }
+
+        // 3d. Check if turn or generation is complete
+        final isTurnComplete = serverContent['turnComplete'] as bool? ?? false;
+        final isGenerationComplete = serverContent['generationComplete'] as bool? ?? false;
+        if (isTurnComplete || isGenerationComplete) {
+          if (_responseBuffer.isNotEmpty) {
+            final fullResponse = _responseBuffer.toString().trim();
+            if (kDebugMode) {
+              print("[LIVE_RESPONSE_COMPLETE] $fullResponse");
+            }
+            onMessageReceived?.call(fullResponse);
+            _responseBuffer.clear();
           }
         }
       }
@@ -177,6 +309,7 @@ class GeminiLiveService {
   }
 
   void sendMessage(String text) {
+    _responseBuffer.clear();
     if (!_isConnected || _channel == null) {
       _triggerError("Cannot send message. WebSocket is not connected.");
       return;

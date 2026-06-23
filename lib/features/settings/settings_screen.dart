@@ -429,7 +429,16 @@ class _WebSocketDiagnosticsCardState extends ConsumerState<WebSocketDiagnosticsC
 
       subscription = channel.stream.listen(
         (message) {
-          final msgStr = message.toString();
+          String msgStr;
+          if (message is String) {
+            msgStr = message;
+          } else if (message is List<int>) {
+            msgStr = utf8.decode(message);
+          } else if (message is List) {
+            msgStr = utf8.decode(message.cast<int>());
+          } else {
+            msgStr = utf8.decode(List<int>.from(message as Iterable));
+          }
           log("Raw message received: ${msgStr.substring(0, msgStr.length > 120 ? 120 : msgStr.length)}...");
           try {
             final Map<String, dynamic> data = jsonDecode(msgStr);
@@ -454,21 +463,45 @@ class _WebSocketDiagnosticsCardState extends ConsumerState<WebSocketDiagnosticsC
               };
               channel!.sink.add(jsonEncode(clientContentMessage));
             } else if (data.containsKey('serverContent')) {
-              log("✓ Received serverContent response!");
               final serverContent = data['serverContent'] as Map<String, dynamic>;
+              
+              // Handle modelTurn (may contain audio inlineData and/or text parts)
               if (serverContent.containsKey('modelTurn')) {
+                log("✓ Received serverContent modelTurn.");
                 final modelTurn = serverContent['modelTurn'] as Map<String, dynamic>;
                 if (modelTurn.containsKey('parts')) {
                   final parts = modelTurn['parts'] as List;
                   for (final part in parts) {
-                    if (part is Map<String, dynamic> && part.containsKey('text')) {
-                      log("Model Reply: \"${part['text']}\"");
+                    if (part is Map<String, dynamic>) {
+                      if (part.containsKey('text')) {
+                        log("Model Reply (text): \"${part['text']}\"");
+                      } else if (part.containsKey('inlineData')) {
+                        log("✓ Received audio data chunk.");
+                      }
                     }
                   }
                 }
+                receivedResponse = true;
+                if (!completer.isCompleted) completer.complete();
               }
-              receivedResponse = true;
-              completer.complete();
+
+              // Handle outputTranscription — text transcript of audio output
+              if (serverContent.containsKey('outputTranscription')) {
+                final transcription = serverContent['outputTranscription'] as Map<String, dynamic>;
+                final directText = transcription['text'] as String?;
+                if (directText != null && directText.isNotEmpty) {
+                  log("Model Reply (transcription): \"$directText\"");
+                } else if (transcription.containsKey('parts')) {
+                  final parts = transcription['parts'] as List;
+                  for (final part in parts) {
+                    if (part is Map<String, dynamic> && part.containsKey('text')) {
+                      log("Model Reply (transcription - fallback): \"${part['text']}\"");
+                    }
+                  }
+                }
+                receivedResponse = true;
+                if (!completer.isCompleted) completer.complete();
+              }
             } else if (data.containsKey('toolCall')) {
               log("✓ Received toolCall suggestion.");
             }
@@ -491,13 +524,26 @@ class _WebSocketDiagnosticsCardState extends ConsumerState<WebSocketDiagnosticsC
       );
 
       // Immediately send setup configuration payload
-      log("Sending session setup message...");
+      // NOTE: Live API models (gemini-3.1-flash-live-preview) require AUDIO modality.
+      // TEXT-only causes WebSocket close code 1007. We use outputAudioTranscription
+      // to receive the text transcript of the model's audio response.
+      log("Sending session setup message (AUDIO modality + transcription)...");
       final setupMessage = {
         "setup": {
           "model": normalizedModel,
           "generationConfig": {
-            "responseModalities": ["TEXT"],
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {
+              "voiceConfig": {
+                "prebuiltVoiceConfig": {
+                  "voiceName": "Puck"
+                }
+              }
+            },
           },
+          // outputAudioTranscription is a top-level BidiGenerateContentSetup field,
+          // NOT a GenerationConfig field.
+          "outputAudioTranscription": {},
           "systemInstruction": {
             "parts": [
               {"text": "You are a connection diagnostics test assistant."}
