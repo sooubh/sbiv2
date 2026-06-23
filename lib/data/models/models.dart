@@ -373,3 +373,233 @@ class SignalSummary {
     );
   }
 }
+
+class FixedDeposit {
+  final String id;
+  final String title;
+  final double principalAmount;
+  final double interestRate;
+  final DateTime maturityDate;
+  final bool isAutoRenew;
+
+  FixedDeposit({
+    required this.id,
+    required this.title,
+    required this.principalAmount,
+    required this.interestRate,
+    required this.maturityDate,
+    required this.isAutoRenew,
+  });
+
+  FixedDeposit copyWith({
+    String? id,
+    String? title,
+    double? principalAmount,
+    double? interestRate,
+    DateTime? maturityDate,
+    bool? isAutoRenew,
+  }) {
+    return FixedDeposit(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      principalAmount: principalAmount ?? this.principalAmount,
+      interestRate: interestRate ?? this.interestRate,
+      maturityDate: maturityDate ?? this.maturityDate,
+      isAutoRenew: isAutoRenew ?? this.isAutoRenew,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'title': title,
+      'principalAmount': principalAmount,
+      'interestRate': interestRate,
+      'maturityDate': maturityDate.toIso8601String(),
+      'isAutoRenew': isAutoRenew,
+    };
+  }
+
+  factory FixedDeposit.fromJson(Map<String, dynamic> json) {
+    return FixedDeposit(
+      id: json['id'] ?? '',
+      title: json['title'] ?? '',
+      principalAmount: (json['principalAmount'] ?? 0.0).toDouble(),
+      interestRate: (json['interestRate'] ?? 0.0).toDouble(),
+      maturityDate: DateTime.parse(json['maturityDate'] ?? DateTime.now().toIso8601String()),
+      isAutoRenew: json['isAutoRenew'] ?? false,
+    );
+  }
+}
+
+class SipInvestment {
+  final String id;
+  final String fundName;
+  final double amount;
+  final String nextPaymentDate;
+  final String category;
+  final String status;
+
+  SipInvestment({
+    required this.id,
+    required this.fundName,
+    required this.amount,
+    required this.nextPaymentDate,
+    required this.category,
+    required this.status,
+  });
+
+  SipInvestment copyWith({
+    String? id,
+    String? fundName,
+    double? amount,
+    String? nextPaymentDate,
+    String? category,
+    String? status,
+  }) {
+    return SipInvestment(
+      id: id ?? this.id,
+      fundName: fundName ?? this.fundName,
+      amount: amount ?? this.amount,
+      nextPaymentDate: nextPaymentDate ?? this.nextPaymentDate,
+      category: category ?? this.category,
+      status: status ?? this.status,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'fundName': fundName,
+      'amount': amount,
+      'nextPaymentDate': nextPaymentDate,
+      'category': category,
+      'status': status,
+    };
+  }
+
+  factory SipInvestment.fromJson(Map<String, dynamic> json) {
+    return SipInvestment(
+      id: json['id'] ?? '',
+      fundName: json['fundName'] ?? '',
+      amount: (json['amount'] ?? 0.0).toDouble(),
+      nextPaymentDate: json['nextPaymentDate'] ?? '',
+      category: json['category'] ?? '',
+      status: json['status'] ?? 'active',
+    );
+  }
+}
+
+class Loan {
+  final String id;
+  final String title;
+  final String accountNumber;
+  final double outstandingBalance;
+  final double emiAmount;
+  final String nextDueDate;
+  final double percentRepaid;
+
+  Loan({
+    required this.id,
+    required this.title,
+    required this.accountNumber,
+    required this.outstandingBalance,
+    required this.emiAmount,
+    required this.nextDueDate,
+    required this.percentRepaid,
+  });
+
+  Loan copyWith({
+    String? id,
+    String? title,
+    String? accountNumber,
+    double? outstandingBalance,
+    double? emiAmount,
+    String? nextDueDate,
+    double? percentRepaid,
+  }) {
+    return Loan(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      accountNumber: accountNumber ?? this.accountNumber,
+      outstandingBalance: outstandingBalance ?? this.outstandingBalance,
+      emiAmount: emiAmount ?? this.emiAmount,
+      nextDueDate: nextDueDate ?? this.nextDueDate,
+      percentRepaid: percentRepaid ?? this.percentRepaid,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'title': title,
+      'accountNumber': accountNumber,
+      'outstandingBalance': outstandingBalance,
+      'emiAmount': emiAmount,
+      'nextDueDate': nextDueDate,
+      'percentRepaid': percentRepaid,
+    };
+  }
+
+  factory Loan.fromJson(Map<String, dynamic> json) {
+    return Loan(
+      id: json['id'] ?? '',
+      title: json['title'] ?? '',
+      accountNumber: json['accountNumber'] ?? '',
+      outstandingBalance: (json['outstandingBalance'] ?? 0.0).toDouble(),
+      emiAmount: (json['emiAmount'] ?? 0.0).toDouble(),
+      nextDueDate: json['nextDueDate'] ?? '',
+      percentRepaid: (json['percentRepaid'] ?? 0.0).toDouble(),
+    );
+  }
+}
+
+class Budget {
+  final double spent;
+  final double limit;
+  final Map<String, double> categoryLimits;
+  final Map<String, double> categorySpent;
+
+  Budget({
+    required this.spent,
+    required this.limit,
+    required this.categoryLimits,
+    required this.categorySpent,
+  });
+
+  Budget copyWith({
+    double? spent,
+    double? limit,
+    Map<String, double>? categoryLimits,
+    Map<String, double>? categorySpent,
+  }) {
+    return Budget(
+      spent: spent ?? this.spent,
+      limit: limit ?? this.limit,
+      categoryLimits: categoryLimits ?? this.categoryLimits,
+      categorySpent: categorySpent ?? this.categorySpent,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'spent': spent,
+      'limit': limit,
+      'categoryLimits': categoryLimits,
+      'categorySpent': categorySpent,
+    };
+  }
+
+  factory Budget.fromJson(Map<String, dynamic> json) {
+    return Budget(
+      spent: (json['spent'] ?? 0.0).toDouble(),
+      limit: (json['limit'] ?? 0.0).toDouble(),
+      categoryLimits: Map<String, double>.from(
+        (json['categoryLimits'] as Map? ?? {}).map((k, v) => MapEntry(k.toString(), (v ?? 0.0).toDouble())),
+      ),
+      categorySpent: Map<String, double>.from(
+        (json['categorySpent'] as Map? ?? {}).map((k, v) => MapEntry(k.toString(), (v ?? 0.0).toDouble())),
+      ),
+    );
+  }
+}

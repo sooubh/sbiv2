@@ -14,6 +14,10 @@ const String kEngagementBox = 'engagement_box';
 const String kSystemBox = 'system_box'; // stores current profile type
 const String kAgentMemoryBox = 'agent_memory_box';
 const String kTimelineBox = 'timeline_box';
+const String kFDBox = 'fd_box';
+const String kSipBox = 'sip_box';
+const String kLoanBox = 'loan_box';
+const String kBudgetBox = 'budget_box';
 
 // Initializer function for Hive
 Future<void> initHive() async {
@@ -27,6 +31,10 @@ Future<void> initHive() async {
   await Hive.openBox(kSystemBox);
   await Hive.openBox(kAgentMemoryBox);
   await Hive.openBox(kTimelineBox);
+  await Hive.openBox(kFDBox);
+  await Hive.openBox(kSipBox);
+  await Hive.openBox(kLoanBox);
+  await Hive.openBox(kBudgetBox);
 }
 
 // Profile Type: 'A' (Rohan, new) or 'B' (Sourabh, existing)
@@ -417,13 +425,35 @@ class ChatMessage {
   final String text;
   final DateTime timestamp;
   final Map<String, dynamic>? toolCall; // Optional tool call metadata
+  final String? toolStatus; // "pending", "approved", "rejected"
+  final String? toolCallId; // Unique ID to identify which functionCall needs approval
 
   ChatMessage({
     required this.sender,
     required this.text,
     required this.timestamp,
     this.toolCall,
+    this.toolStatus,
+    this.toolCallId,
   });
+
+  ChatMessage copyWith({
+    String? sender,
+    String? text,
+    DateTime? timestamp,
+    Map<String, dynamic>? toolCall,
+    String? toolStatus,
+    String? toolCallId,
+  }) {
+    return ChatMessage(
+      sender: sender ?? this.sender,
+      text: text ?? this.text,
+      timestamp: timestamp ?? this.timestamp,
+      toolCall: toolCall ?? this.toolCall,
+      toolStatus: toolStatus ?? this.toolStatus,
+      toolCallId: toolCallId ?? this.toolCallId,
+    );
+  }
 }
 
 // Onboarding Chat Messages Notifier
@@ -445,6 +475,15 @@ class ChatMessagesNotifier extends StateNotifier<List<ChatMessage>> {
 
   void addMessage(ChatMessage message) {
     state = [...state, message];
+  }
+
+  void updateMessageStatus(String toolCallId, String status) {
+    state = state.map((msg) {
+      if (msg.toolCallId == toolCallId) {
+        return msg.copyWith(toolStatus: status);
+      }
+      return msg;
+    }).toList();
   }
 
   void reset() {
@@ -577,3 +616,320 @@ final aiModelConfigProvider = StateNotifierProvider<AiModelConfigNotifier, AiMod
 });
 
 final currentNavIndexProvider = StateProvider<int>((ref) => 0);
+
+// FD List Provider
+final fdListProvider = StateNotifierProvider<FDListNotifier, List<FixedDeposit>>((ref) {
+  final profileType = ref.watch(profileTypeProvider);
+  return FDListNotifier(profileType);
+});
+
+class FDListNotifier extends StateNotifier<List<FixedDeposit>> {
+  final String profileType;
+
+  FDListNotifier(this.profileType) : super([]) {
+    loadFDs();
+  }
+
+  void loadFDs() {
+    final box = Hive.box(kFDBox);
+    final key = 'fds_$profileType';
+    final cached = box.get(key);
+    if (cached != null) {
+      final list = List<dynamic>.from(cached);
+      state = list.map((e) => FixedDeposit.fromJson(Map<String, dynamic>.from(e))).toList();
+    } else {
+      state = profileType == 'A' ? [] : [
+        FixedDeposit(
+          id: 'fd_01',
+          title: 'Tax Saving FD',
+          principalAmount: 50000.0,
+          interestRate: 7.10,
+          maturityDate: DateTime.now().add(const Duration(days: 14)),
+          isAutoRenew: true,
+        ),
+        FixedDeposit(
+          id: 'fd_02',
+          title: 'Standard FD (1 Yr)',
+          principalAmount: 100000.0,
+          interestRate: 6.80,
+          maturityDate: DateTime.now().add(const Duration(days: 240)),
+          isAutoRenew: false,
+        ),
+      ];
+      saveFDs();
+    }
+  }
+
+  void saveFDs() {
+    final box = Hive.box(kFDBox);
+    box.put('fds_$profileType', state.map((e) => e.toJson()).toList());
+  }
+
+  void openFD(String title, double amount, {bool autoRenew = false, double rate = 7.20}) {
+    final fd = FixedDeposit(
+      id: 'fd_${DateTime.now().millisecondsSinceEpoch}',
+      title: title,
+      principalAmount: amount,
+      interestRate: rate,
+      maturityDate: DateTime.now().add(const Duration(days: 365)),
+      isAutoRenew: autoRenew,
+    );
+    state = [...state, fd];
+    saveFDs();
+  }
+
+  void closeFD(String id) {
+    state = state.where((fd) => fd.id != id).toList();
+    saveFDs();
+  }
+
+  void toggleAutoRenew(String id) {
+    state = state.map((fd) {
+      if (fd.id == id) {
+        return fd.copyWith(isAutoRenew: !fd.isAutoRenew);
+      }
+      return fd;
+    }).toList();
+    saveFDs();
+  }
+
+  void reset() {
+    Hive.box(kFDBox).delete('fds_$profileType');
+    loadFDs();
+  }
+}
+
+// SIP List Provider
+final sipListProvider = StateNotifierProvider<SipListNotifier, List<SipInvestment>>((ref) {
+  final profileType = ref.watch(profileTypeProvider);
+  return SipListNotifier(profileType);
+});
+
+class SipListNotifier extends StateNotifier<List<SipInvestment>> {
+  final String profileType;
+
+  SipListNotifier(this.profileType) : super([]) {
+    loadSIPs();
+  }
+
+  void loadSIPs() {
+    final box = Hive.box(kSipBox);
+    final key = 'sips_$profileType';
+    final cached = box.get(key);
+    if (cached != null) {
+      final list = List<dynamic>.from(cached);
+      state = list.map((e) => SipInvestment.fromJson(Map<String, dynamic>.from(e))).toList();
+    } else {
+      state = profileType == 'A' ? [] : [
+        SipInvestment(
+          id: 'sip_01',
+          fundName: 'SBI Bluechip Fund',
+          amount: 10000.0,
+          nextPaymentDate: '12th of every month',
+          category: 'Large Cap',
+          status: 'active',
+        ),
+        SipInvestment(
+          id: 'sip_02',
+          fundName: 'SBI Small Cap Fund',
+          amount: 5000.0,
+          nextPaymentDate: '5th of every month',
+          category: 'Small Cap',
+          status: 'active',
+        ),
+      ];
+      saveSIPs();
+    }
+  }
+
+  void saveSIPs() {
+    final box = Hive.box(kSipBox);
+    box.put('sips_$profileType', state.map((e) => e.toJson()).toList());
+  }
+
+  void createSIP(String fundName, double amount, {String category = 'Equity'}) {
+    final sip = SipInvestment(
+      id: 'sip_${DateTime.now().millisecondsSinceEpoch}',
+      fundName: fundName,
+      amount: amount,
+      nextPaymentDate: '15th of every month',
+      category: category,
+      status: 'active',
+    );
+    state = [...state, sip];
+    saveSIPs();
+  }
+
+  void updateSIP(String id, double newAmount) {
+    state = state.map((s) {
+      if (s.id == id) {
+        return s.copyWith(amount: newAmount);
+      }
+      return s;
+    }).toList();
+    saveSIPs();
+  }
+
+  void cancelSIP(String id) {
+    state = state.map((s) {
+      if (s.id == id) {
+        return s.copyWith(status: 'cancelled');
+      }
+      return s;
+    }).toList();
+    saveSIPs();
+  }
+
+  void reset() {
+    Hive.box(kSipBox).delete('sips_$profileType');
+    loadSIPs();
+  }
+}
+
+// Loan List Provider
+final loanListProvider = StateNotifierProvider<LoanListNotifier, List<Loan>>((ref) {
+  final profileType = ref.watch(profileTypeProvider);
+  return LoanListNotifier(profileType);
+});
+
+class LoanListNotifier extends StateNotifier<List<Loan>> {
+  final String profileType;
+
+  LoanListNotifier(this.profileType) : super([]) {
+    loadLoans();
+  }
+
+  void loadLoans() {
+    final box = Hive.box(kLoanBox);
+    final key = 'loans_$profileType';
+    final cached = box.get(key);
+    if (cached != null) {
+      final list = List<dynamic>.from(cached);
+      state = list.map((e) => Loan.fromJson(Map<String, dynamic>.from(e))).toList();
+    } else {
+      state = profileType == 'A' ? [] : [
+        Loan(
+          id: 'loan_01',
+          title: 'Home Loan',
+          accountNumber: 'XXXXX8901',
+          outstandingBalance: 3245000.0,
+          emiAmount: 28500.0,
+          nextDueDate: '5th Jul',
+          percentRepaid: 0.15,
+        )
+      ];
+      saveLoans();
+    }
+  }
+
+  void saveLoans() {
+    final box = Hive.box(kLoanBox);
+    box.put('loans_$profileType', state.map((e) => e.toJson()).toList());
+  }
+
+  void payEMI(String loanId, double amount) {
+    state = state.map((l) {
+      if (l.id == loanId) {
+        final outstanding = (l.outstandingBalance - amount).clamp(0.0, double.infinity);
+        final repaid = 1.0 - (outstanding / 3800000.0); // Assume original outstanding was ~38L
+        return l.copyWith(
+          outstandingBalance: outstanding,
+          percentRepaid: repaid.clamp(0.0, 1.0),
+        );
+      }
+      return l;
+    }).toList();
+    saveLoans();
+  }
+
+  void prepayLoan(String loanId, double amount) {
+    state = state.map((l) {
+      if (l.id == loanId) {
+        final outstanding = (l.outstandingBalance - amount).clamp(0.0, double.infinity);
+        final repaid = 1.0 - (outstanding / 3800000.0);
+        return l.copyWith(
+          outstandingBalance: outstanding,
+          percentRepaid: repaid.clamp(0.0, 1.0),
+        );
+      }
+      return l;
+    }).toList();
+    saveLoans();
+  }
+
+  void reset() {
+    Hive.box(kLoanBox).delete('loans_$profileType');
+    loadLoans();
+  }
+}
+
+// Budget Provider
+final budgetProvider = StateNotifierProvider<BudgetNotifier, Budget>((ref) {
+  final profileType = ref.watch(profileTypeProvider);
+  return BudgetNotifier(profileType);
+});
+
+class BudgetNotifier extends StateNotifier<Budget> {
+  final String profileType;
+
+  BudgetNotifier(this.profileType) : super(Budget(spent: 0, limit: 0, categoryLimits: {}, categorySpent: {})) {
+    loadBudget();
+  }
+
+  void loadBudget() {
+    final box = Hive.box(kBudgetBox);
+    final key = 'budget_$profileType';
+    final cached = box.get(key);
+    if (cached != null) {
+      state = Budget.fromJson(Map<String, dynamic>.from(cached));
+    } else {
+      state = Budget(
+        spent: 32000.0,
+        limit: 45000.0,
+        categoryLimits: {
+          'Rent & Utilities': 15000.0,
+          'Food & Dining': 10000.0,
+          'Shopping': 8000.0,
+          'Others': 12000.0,
+        },
+        categorySpent: {
+          'Rent & Utilities': 15000.0,
+          'Food & Dining': 8500.0,
+          'Shopping': 5000.0,
+          'Others': 3500.0,
+        },
+      );
+      saveBudget();
+    }
+  }
+
+  void saveBudget() {
+    final box = Hive.box(kBudgetBox);
+    box.put('budget_$profileType', state.toJson());
+  }
+
+  void setBudgetLimit(double limit) {
+    state = state.copyWith(limit: limit);
+    saveBudget();
+  }
+
+  void setCategoryLimit(String category, double limit) {
+    final updatedLimits = Map<String, double>.from(state.categoryLimits);
+    updatedLimits[category] = limit;
+    state = state.copyWith(categoryLimits: updatedLimits);
+    saveBudget();
+  }
+
+  void addExpense(String category, double amount) {
+    final updatedSpent = Map<String, double>.from(state.categorySpent);
+    updatedSpent[category] = (updatedSpent[category] ?? 0.0) + amount;
+    final totalSpent = state.spent + amount;
+    state = state.copyWith(spent: totalSpent, categorySpent: updatedSpent);
+    saveBudget();
+  }
+
+  void reset() {
+    Hive.box(kBudgetBox).delete('budget_$profileType');
+    loadBudget();
+  }
+}

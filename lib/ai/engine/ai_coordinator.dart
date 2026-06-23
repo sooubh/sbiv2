@@ -81,6 +81,25 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
   final List<ToolCallItem> _toolCallQueue = [];
   bool _isProcessingToolCall = false;
 
+  // Pending confirmations map
+  final Map<String, Completer<bool>> _pendingConfirmations = {};
+
+  void confirmToolCall(String toolCallId, bool approve) {
+    final completer = _pendingConfirmations.remove(toolCallId);
+    if (completer != null) {
+      completer.complete(approve);
+
+      final memory = _ref.read(agentMemoryProvider);
+      final profileType = _ref.read(profileTypeProvider);
+      final isOnboarding = !memory.onboardingCompleted && profileType == 'A';
+      final chatNotifier = isOnboarding
+          ? _ref.read(onboardingChatProvider.notifier)
+          : _ref.read(bankingChatProvider.notifier);
+
+      chatNotifier.updateMessageStatus(toolCallId, approve ? 'approved' : 'rejected');
+    }
+  }
+
   AICoordinator(this._ref)
       : super(AICoordinatorState(
           mode: AIServiceMode.simulated,
@@ -270,20 +289,37 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
       _enqueueToolCall(name, args, callId, (name, args, callId) async {
         state = state.copyWith(isThinking: true);
         agentState.setStatus(AgentStatus.thinking);
-        _addMessageToUI('system', "Agent executing tool: $name...", toolCall: {'name': name, 'args': args});
         
-        final output = await _executeTool(name, args);
-        
-        if (output['status'] == 'failed' || output['status'] == 'error') {
-          final reason = output['reason'] ?? 'Tool call failed';
-          _addMessageToUI('tool', "Agent tool $name failed ❌: $reason", toolCall: {'output': output});
+        final toolCallId = 'live_call_${DateTime.now().millisecondsSinceEpoch}';
+        final completer = Completer<bool>();
+        _pendingConfirmations[toolCallId] = completer;
+
+        _addMessageToUI(
+          'system',
+          "Agent wants to execute tool: $name",
+          toolCall: {'name': name, 'args': args},
+          toolStatus: 'pending',
+          toolCallId: toolCallId,
+        );
+
+        final approved = await completer.future;
+
+        if (approved) {
+          final output = await _executeTool(name, args);
+          if (output['status'] == 'failed' || output['status'] == 'error') {
+            final reason = output['reason'] ?? 'Tool call failed';
+            _addMessageToUI('tool', "Agent tool $name failed ❌: $reason", toolCall: {'output': output});
+          } else {
+            _addMessageToUI('tool', "Agent completed $name ✅", toolCall: {'output': output});
+          }
+          _liveService.sendToolResponse(callId, output);
         } else {
-          _addMessageToUI('tool', "Agent completed $name ✅", toolCall: {'output': output});
+          final output = {'status': 'failed', 'reason': 'User rejected/cancelled tool execution.'};
+          _addMessageToUI('tool', "Agent tool execution for $name was cancelled by user ❌", toolCall: {'output': output});
+          _liveService.sendToolResponse(callId, output);
         }
 
-        _liveService.sendToolResponse(callId, output);
         state = state.copyWith(isThinking: false);
-        
         if (agentState.state.status != AgentStatus.error) {
           agentState.setStatus(AgentStatus.idle);
         }
@@ -520,26 +556,56 @@ BEHAVIOR RULES:
           }
         },
         {
-          'name': 'move_to_fd',
-          'description': 'Saves money from balance into a secure Fixed Deposit.',
+          'name': 'manage_sip',
+          'description': 'Creates, updates, or cancels a Mutual Fund SIP.',
           'parameters': {
             'type': 'OBJECT',
             'properties': {
-              'amount': {'type': 'NUMBER', 'description': 'Amount to deposit'},
-              'reason': {'type': 'STRING', 'description': 'Reason for opening Fixed Deposit'}
+              'action': {'type': 'STRING', 'description': 'Action: "create", "update", or "cancel"'},
+              'fund_name': {'type': 'STRING', 'description': 'Mutual fund name'},
+              'amount': {'type': 'NUMBER', 'description': 'SIP amount (required for create/update)'}
             },
-            'required': ['amount', 'reason']
+            'required': ['action', 'fund_name']
           }
         },
         {
-          'name': 'resume_sip',
-          'description': 'Resumes the missed Mutual Fund SIP payment.',
+          'name': 'manage_fd',
+          'description': 'Opens, closes, or renews a Fixed Deposit.',
           'parameters': {
             'type': 'OBJECT',
             'properties': {
-              'reason': {'type': 'STRING', 'description': 'Reason for resuming'}
+              'action': {'type': 'STRING', 'description': 'Action: "open", "close", or "renew"'},
+              'title': {'type': 'STRING', 'description': 'FD Title, e.g. "Tax Saving FD"'},
+              'amount': {'type': 'NUMBER', 'description': 'Principal amount (required for open)'},
+              'auto_renew': {'type': 'BOOLEAN', 'description': 'Auto-renew option'}
             },
-            'required': ['reason']
+            'required': ['action', 'title']
+          }
+        },
+        {
+          'name': 'manage_loan',
+          'description': 'Pays EMI or executes prepayment on a loan.',
+          'parameters': {
+            'type': 'OBJECT',
+            'properties': {
+              'action': {'type': 'STRING', 'description': 'Action: "pay_emi" or "prepay"'},
+              'loan_id': {'type': 'STRING', 'description': 'Loan account ID, e.g. "loan_01"'},
+              'amount': {'type': 'NUMBER', 'description': 'Amount to pay'}
+            },
+            'required': ['action', 'loan_id', 'amount']
+          }
+        },
+        {
+          'name': 'manage_budget',
+          'description': 'Sets overall or category-wise budget limits.',
+          'parameters': {
+            'type': 'OBJECT',
+            'properties': {
+              'action': {'type': 'STRING', 'description': 'Action: "set_limit" or "set_category_limit"'},
+              'category': {'type': 'STRING', 'description': 'Budget category (required for set_category_limit)'},
+              'limit': {'type': 'NUMBER', 'description': 'Budget limit amount'}
+            },
+            'required': ['action', 'limit']
           }
         },
         {
@@ -548,7 +614,7 @@ BEHAVIOR RULES:
           'parameters': {
             'type': 'OBJECT',
             'properties': {
-              'name': {'type': 'STRING', 'description': 'Name of the goal, e.g. Dream Car, Home Downpayment'},
+              'name': {'type': 'STRING', 'description': 'Name of the goal'},
               'target_amount': {'type': 'NUMBER', 'description': 'Target savings amount'}
             },
             'required': ['name', 'target_amount']
@@ -571,18 +637,18 @@ BEHAVIOR RULES:
     }
   }
 
-  void _addMessageToUI(String sender, String text, {Map<String, dynamic>? toolCall}) {
+  void _addMessageToUI(String sender, String text, {Map<String, dynamic>? toolCall, String? toolStatus, String? toolCallId}) {
     final memory = _ref.read(agentMemoryProvider);
     final profileType = _ref.read(profileTypeProvider);
     final isOnboarding = !memory.onboardingCompleted && profileType == 'A';
 
     if (isOnboarding) {
       _ref.read(onboardingChatProvider.notifier).addMessage(
-            ChatMessage(sender: sender, text: text, timestamp: DateTime.now(), toolCall: toolCall),
+            ChatMessage(sender: sender, text: text, timestamp: DateTime.now(), toolCall: toolCall, toolStatus: toolStatus, toolCallId: toolCallId),
           );
     } else {
       _ref.read(bankingChatProvider.notifier).addMessage(
-            ChatMessage(sender: sender, text: text, timestamp: DateTime.now(), toolCall: toolCall),
+            ChatMessage(sender: sender, text: text, timestamp: DateTime.now(), toolCall: toolCall, toolStatus: toolStatus, toolCallId: toolCallId),
           );
     }
   }
@@ -648,15 +714,32 @@ BEHAVIOR RULES:
             final name = funcCall['name'];
             final args = Map<String, dynamic>.from(funcCall['args'] ?? {});
             
-            _addMessageToUI('system', "Agent executing tool: $name...", toolCall: {'name': name, 'args': args});
-            
-            final output = await _executeTool(name, args);
-            
-            if (output['status'] == 'failed' || output['status'] == 'error') {
-              final reason = output['reason'] ?? 'Tool call failed';
-              _addMessageToUI('tool', "Agent tool $name failed ❌: $reason", toolCall: {'output': output});
+            final toolCallId = 'rest_call_${DateTime.now().millisecondsSinceEpoch}';
+            final completer = Completer<bool>();
+            _pendingConfirmations[toolCallId] = completer;
+
+            _addMessageToUI(
+              'system',
+              "Agent wants to execute tool: $name",
+              toolCall: {'name': name, 'args': args},
+              toolStatus: 'pending',
+              toolCallId: toolCallId,
+            );
+
+            final approved = await completer.future;
+            Map<String, dynamic> output;
+
+            if (approved) {
+              output = await _executeTool(name, args);
+              if (output['status'] == 'failed' || output['status'] == 'error') {
+                final reason = output['reason'] ?? 'Tool call failed';
+                _addMessageToUI('tool', "Agent tool $name failed ❌: $reason", toolCall: {'output': output});
+              } else {
+                _addMessageToUI('tool', "Agent completed $name ✅", toolCall: {'output': output});
+              }
             } else {
-              _addMessageToUI('tool', "Agent completed $name ✅", toolCall: {'output': output});
+              output = {'status': 'failed', 'reason': 'User rejected/cancelled tool execution.'};
+              _addMessageToUI('tool', "Agent tool execution for $name was cancelled by user ❌", toolCall: {'output': output});
             }
 
             // Send tool response to REST in the next call
@@ -765,8 +848,93 @@ BEHAVIOR RULES:
         agentFinalText = "UPI set up complete! ✅ VPA: rohan@sbi is active. 30 SBI Coins earned. Welcome to YONO SBI 2.0. You are ready to enter Banking Mode!";
       }
     } else {
-      // Sourabh / General Banking Assistant Chat Simulation
-      if (query.contains('send') || query.contains('bhej') || query.contains('transfer') || query.contains('pay')) {
+      // Regex Matchers for Banking Simulation
+      final matchCreateSip = RegExp(r'(?:create|start|initiate)\s+(?:sip|mutual fund)\s+(?:of|for)?\s*₹?(\d+)(?:\s+in\s+([a-zA-Z0-9\s]+))?', caseSensitive: false).firstMatch(query);
+      final matchUpdateSip = RegExp(r'(?:update|change|modify)\s+(?:sip)\s+(?:of|for|amount to)?\s*₹?(\d+)(?:\s+(?:in|for)\s+([a-zA-Z0-9\s]+))?', caseSensitive: false).firstMatch(query);
+      final matchCancelSip = RegExp(r'(?:cancel|stop|close)\s+(?:sip|mutual fund)\s+(?:in|for)?\s*([a-zA-Z0-9\s]+)', caseSensitive: false).firstMatch(query);
+      
+      final matchOpenFd = RegExp(r'(?:open|create|start)\s+(?:fd|fixed deposit)\s+(?:of|for)?\s*₹?(\d+)', caseSensitive: false).firstMatch(query);
+      final matchCloseFd = RegExp(r'(?:close|cancel|withdraw)\s+(?:fd|fixed deposit)\s+(?:named|for)?\s*([a-zA-Z0-9\s\-\(\)]+)', caseSensitive: false).firstMatch(query);
+      
+      final matchPrepayLoan = RegExp(r'(?:prepay|part pay)\s+(?:loan)\s+(?:of|with)?\s*₹?(\d+)', caseSensitive: false).firstMatch(query);
+      final matchPayEmi = RegExp(r'(?:pay|debit)\s+(?:emi|loan emi)(?:\s+(?:of|for)?\s*₹?(\d+))?', caseSensitive: false).firstMatch(query);
+      
+      final matchSetBudget = RegExp(r'(?:set|change)\s+(?:budget limit|limit|budget)\s+(?:to)?\s*₹?(\d+)', caseSensitive: false).firstMatch(query);
+      final matchSetCategoryBudget = RegExp(r'(?:set|change)\s+([a-zA-Z\s]+)\s+(?:budget|limit)\s+(?:to)?\s*₹?(\d+)', caseSensitive: false).firstMatch(query);
+
+      if (matchCreateSip != null) {
+        final amount = double.parse(matchCreateSip.group(1)!);
+        final fundName = matchCreateSip.group(2)?.trim() ?? 'SBI Bluechip Fund';
+        agentInitialText = "SBI SIP setup utility active. Main $fundName mein ₹${amount.toStringAsFixed(0)} ki monthly SIP configure kar raha hun.";
+        triggerTool = "manage_sip";
+        toolArgs = {'action': 'create', 'fund_name': fundName, 'amount': amount};
+        agentFinalText = "$fundName mein ₹${amount.toStringAsFixed(0)} ki monthly SIP register ho chuki hai! 🎉 Streak status: Active.";
+      } else if (matchUpdateSip != null) {
+        final amount = double.parse(matchUpdateSip.group(1)!);
+        final fundName = matchUpdateSip.group(2)?.trim() ?? 'SBI Bluechip Fund';
+        agentInitialText = "SIP amount modify request. $fundName ki monthly limit update karke ₹${amount.toStringAsFixed(0)} karne ka setup chal raha hai.";
+        triggerTool = "manage_sip";
+        toolArgs = {'action': 'update', 'fund_name': fundName, 'amount': amount};
+        agentFinalText = "SIP modified successfully! ✅ $fundName ki monthly investment ab ₹${amount.toStringAsFixed(0)} hai.";
+      } else if (matchCancelSip != null) {
+        final fundName = matchCancelSip.group(1)!.trim();
+        agentInitialText = "SIP cancellation initialization. $fundName standard auto-debit payments cancel karne ka request process ho raha hai.";
+        triggerTool = "manage_sip";
+        toolArgs = {'action': 'cancel', 'fund_name': fundName};
+        agentFinalText = "SIP cancelled! ❌ $fundName investments close kar di gayi hain.";
+      } else if (matchOpenFd != null) {
+        final amount = double.parse(matchOpenFd.group(1)!);
+        if (profile.balance < amount) {
+          agentInitialText = "Checking balance for FD request...";
+          agentFinalText = "Oops! Fixed Deposit open karne ke liye ₹${amount.toStringAsFixed(0)} balance insufficient hai.";
+        } else {
+          agentInitialText = "Savings surplus review. ₹${amount.toStringAsFixed(0)} se secure Fixed Deposit initialize kar raha hun at 7.2% secure interest rate.";
+          triggerTool = "manage_fd";
+          toolArgs = {'action': 'open', 'amount': amount, 'title': 'Standard FD'};
+          agentFinalText = "Fixed Deposit open ho chuka hai! ✅ ₹${amount.toStringAsFixed(0)} lock kar diye gaye hain. interest rate: 7.20% p.a.";
+        }
+      } else if (matchCloseFd != null) {
+        final title = matchCloseFd.group(1)!.trim();
+        agentInitialText = "Fixed Deposit closure request. $title ka mature closure initialize kar raha hun.";
+        triggerTool = "manage_fd";
+        toolArgs = {'action': 'close', 'title': title};
+        agentFinalText = "Fixed Deposit close ho gaya! Principal amount savings balance mein add ho chuka hai.";
+      } else if (matchPrepayLoan != null) {
+        final amount = double.parse(matchPrepayLoan.group(1)!);
+        if (profile.balance < amount) {
+          agentInitialText = "Loan prepayment balance verification...";
+          agentFinalText = "Outstanding prepayment ke liye ₹${amount.toStringAsFixed(0)} sufficient balance nahi hai.";
+        } else {
+          agentInitialText = "Loan prepayment procedure start. ₹${amount.toStringAsFixed(0)} amount deduct karke outstanding balance reduce kar raha hun.";
+          triggerTool = "manage_loan";
+          toolArgs = {'action': 'prepay', 'loan_id': 'loan_01', 'amount': amount};
+          agentFinalText = "Prepayment complete! Home Loan outstanding balance is reduced by ₹${amount.toStringAsFixed(0)}. ₹1.2L projected interest saved.";
+        }
+      } else if (matchPayEmi != null) {
+        final amount = matchPayEmi.group(1) != null ? double.parse(matchPayEmi.group(1)!) : 28500.0;
+        if (profile.balance < amount) {
+          agentInitialText = "EMI automated debit check...";
+          agentFinalText = "Monthly EMI payment ke liye ₹${amount.toStringAsFixed(0)} available nahi hai.";
+        } else {
+          agentInitialText = "EMI Auto-Debit processing. Paying installment of ₹${amount.toStringAsFixed(0)}.";
+          triggerTool = "manage_loan";
+          toolArgs = {'action': 'pay_emi', 'loan_id': 'loan_01', 'amount': amount};
+          agentFinalText = "EMI payment successful! ✅ ₹${amount.toStringAsFixed(0)} paid towards your Home Loan.";
+        }
+      } else if (matchSetBudget != null) {
+        final limit = double.parse(matchSetBudget.group(1)!);
+        agentInitialText = "Wallet monthly limit reconfiguration processing...";
+        triggerTool = "manage_budget";
+        toolArgs = {'action': 'set_limit', 'limit': limit};
+        agentFinalText = "Overall budget limit updated to ₹${limit.toStringAsFixed(0)} successfully!";
+      } else if (matchSetCategoryBudget != null) {
+        final category = matchSetCategoryBudget.group(1)!.trim();
+        final limit = double.parse(matchSetCategoryBudget.group(2)!);
+        agentInitialText = "$category sub-limit category threshold update initialize...";
+        triggerTool = "manage_budget";
+        toolArgs = {'action': 'set_category_limit', 'category': category, 'limit': limit};
+        agentFinalText = "$category limit set to ₹${limit.toStringAsFixed(0)}. Spending analyzer active.";
+      } else if (query.contains('send') || query.contains('bhej') || query.contains('transfer') || query.contains('pay')) {
         double amount = 2000;
         String recipient = "Mom";
         final matchAmount = RegExp(r'\d+').firstMatch(query);
@@ -787,37 +955,6 @@ BEHAVIOR RULES:
           
           final updatedBalance = profile.balance - amount;
           agentFinalText = "Transfer complete! ✅ ₹${amount.toStringAsFixed(0)} successfully transferred to $recipient. Your updated balance is ₹${updatedBalance.toStringAsFixed(2)}.";
-        }
-      } else if (query.contains('sip') || query.contains('mutual fund') || query.contains('invest')) {
-        agentInitialText = "SIP missed check trigger. Main SBI Mutual Fund setup utility verify kar raha hun...";
-        triggerTool = "resume_sip";
-        toolArgs = {'reason': 'Resume June SIP - AI Insight'};
-        agentFinalText = "June SBI Bluechip Mutual Fund SIP successfully restored! ✅ 50 SBI Coins awarded. Streak 🔥 status active.";
-      } else if (query.contains('fd') || query.contains('fixed deposit') || query.contains('saving')) {
-        const amount = 50000.0;
-        if (profile.balance < amount) {
-          agentInitialText = "Fixed Deposit opening request received. Inspecting idle balance buffers...";
-          agentFinalText = "Insufficient funds. Fixed Deposit start karne ke liye minimum ₹50,000 balance require hai.";
-        } else {
-          agentInitialText = "Idle balance detected. ₹50,000 savings account se Fixed Deposit account mein shift kar raha hun at 7.2% secure interest.";
-          triggerTool = "move_to_fd";
-          toolArgs = {'amount': amount, 'reason': 'Allocate idle balance to FD'};
-          
-          final updatedBalance = profile.balance - amount;
-          agentFinalText = "Fixed Deposit successfully initialized! ✅ ₹50,000 locked. 50 Coins earned. Remaining balance: ₹${updatedBalance.toStringAsFixed(2)}.";
-        }
-      } else if (query.contains('goal') || query.contains('save') || query.contains('boost')) {
-        const amount = 500.0;
-        if (profile.balance < amount) {
-          agentInitialText = "Checking goal boost buffer...";
-          agentFinalText = "Insufficient balance. Goal boost execute nahi kiya ja sakta.";
-        } else {
-          agentInitialText = "Sure! ₹500 se Dream Car savings goal boost execute kar raha hun.";
-          triggerTool = "boost_goal_savings";
-          toolArgs = {'goal_id': 'goal_01', 'amount': amount, 'reason': 'AI Coach auto-boost'};
-          
-          final updatedBalance = profile.balance - amount;
-          agentFinalText = "Goal boosted! ✅ ₹500 successfully added to your Dream Car goal. 10 Coins earned. Remaining balance: ₹${updatedBalance.toStringAsFixed(2)}.";
         }
       } else if (query.contains('balance') || query.contains('paisa') || query.contains('khata')) {
         agentInitialText = "Account profile checking in progress...";
@@ -840,24 +977,42 @@ BEHAVIOR RULES:
     // Phase 2: Execute simulated tool calling sequence
     if (triggerTool != null) {
       await Future.delayed(const Duration(milliseconds: 600));
-      _addMessageToUI('system', "Agent executing tool (simulated): $triggerTool...", toolCall: {'name': triggerTool, 'args': toolArgs});
-      
-      await Future.delayed(const Duration(milliseconds: 1000));
-      final output = await _executeTool(triggerTool, toolArgs);
-      
-      if (output['status'] == 'failed' || output['status'] == 'error') {
-        final reason = output['reason'] ?? 'Tool call failed';
-        _addMessageToUI('tool', "Agent tool $triggerTool failed ❌: $reason", toolCall: {'output': output});
+      final toolCallId = 'sim_call_${DateTime.now().millisecondsSinceEpoch}';
+      final completer = Completer<bool>();
+      _pendingConfirmations[toolCallId] = completer;
+
+      _addMessageToUI(
+        'system',
+        "Agent wants to execute tool (simulated): $triggerTool",
+        toolCall: {'name': triggerTool, 'args': toolArgs},
+        toolStatus: 'pending',
+        toolCallId: toolCallId,
+      );
+
+      final approved = await completer.future;
+
+      if (approved) {
+        final output = await _executeTool(triggerTool, toolArgs);
+        if (output['status'] == 'failed' || output['status'] == 'error') {
+          final reason = output['reason'] ?? 'Tool call failed';
+          _addMessageToUI('tool', "Agent tool $triggerTool failed ❌: $reason", toolCall: {'output': output});
+        } else {
+          _addMessageToUI('tool', "Agent completed $triggerTool ✅", toolCall: {'output': output});
+        }
+
+        // Phase 3: Output final response reflecting the updated state
+        if (agentFinalText.isNotEmpty) {
+          await Future.delayed(const Duration(milliseconds: 600));
+          agentState.setLastAgentMessage(agentFinalText);
+          _addMessageToUI('agent', agentFinalText);
+          _ref.read(voiceServiceProvider).speak(agentFinalText);
+        }
       } else {
-        _addMessageToUI('tool', "Agent completed $triggerTool ✅", toolCall: {'output': output});
-      }
-      
-      // Phase 3: Output final response reflecting the updated state
-      if (agentFinalText.isNotEmpty) {
-        await Future.delayed(const Duration(milliseconds: 600));
-        agentState.setLastAgentMessage(agentFinalText);
-        _addMessageToUI('agent', agentFinalText);
-        _ref.read(voiceServiceProvider).speak(agentFinalText);
+        _addMessageToUI('tool', "Agent tool execution for $triggerTool was cancelled by user ❌", toolCall: {'output': {'status': 'failed'}});
+        const cancelReply = "Theek hai, main target transaction cancel kar raha hun. Budget or investments modify nahi kiye gaye hain. Aur kuch help chahiye?";
+        agentState.setLastAgentMessage(cancelReply);
+        _addMessageToUI('agent', cancelReply);
+        _ref.read(voiceServiceProvider).speak(cancelReply);
       }
     } else {
       // Direct reply without tool execution

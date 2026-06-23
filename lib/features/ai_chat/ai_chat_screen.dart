@@ -210,7 +210,7 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
             itemBuilder: (context, index) {
               final msg = messages[index];
               if (msg.sender == 'system') {
-                return _buildSystemLog(msg.text, msg.toolCall);
+                return _buildSystemLog(msg);
               }
               if (msg.sender == 'tool') {
                 return _buildToolResult(msg.text, msg.toolCall);
@@ -522,33 +522,168 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
     );
   }
 
-  Widget _buildSystemLog(String text, Map<String, dynamic>? toolCall) {
+  Widget _buildSystemLog(ChatMessage msg) {
+    final toolCall = msg.toolCall;
     final toolName = toolCall?['name'] ?? '';
     final args = toolCall?['args'] ?? {};
+    final status = msg.toolStatus;
+
+    if (status == 'pending') {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 12, top: 4),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppTheme.aiTeal.withValues(alpha: 0.4), width: 1.5),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.security_outlined, color: AppTheme.aiTeal, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  'Confirm Action Request',
+                  style: GoogleFonts.poppins(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'The Agent is requesting permission to perform the following action:',
+              style: GoogleFonts.inter(fontSize: 12, color: AppTheme.textSecondary),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppTheme.background,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Action: $toolName',
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.primary,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  ...args.entries.map((e) => Text(
+                        '${e.key}: ${e.value}',
+                        style: AppTheme.monoStyle(fontSize: 11, color: AppTheme.textPrimary),
+                      )),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                OutlinedButton(
+                  onPressed: () {
+                    ref.read(aiCoordinatorProvider.notifier).confirmToolCall(msg.toolCallId!, false);
+                  },
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red,
+                    side: const BorderSide(color: Colors.red),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  ),
+                  child: const Text('Cancel'),
+                ),
+                const SizedBox(width: 12),
+                ElevatedButton(
+                  onPressed: () {
+                    ref.read(aiCoordinatorProvider.notifier).confirmToolCall(msg.toolCallId!, true);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.aiTeal,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  ),
+                  child: const Text('Approve'),
+                ),
+              ],
+            )
+          ],
+        ),
+      );
+    }
+
+    final isApproved = status == 'approved';
+    final isRejected = status == 'rejected';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12, top: 4),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: AppTheme.aiTeal.withValues(alpha: 0.08),
+        color: isApproved
+            ? AppTheme.aiTeal.withValues(alpha: 0.08)
+            : isRejected
+                ? Colors.red.withValues(alpha: 0.05)
+                : AppTheme.aiTeal.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.aiTeal.withValues(alpha: 0.2), width: 1),
+        border: Border.all(
+          color: isApproved
+              ? AppTheme.aiTeal.withValues(alpha: 0.3)
+              : isRejected
+                  ? Colors.red.withValues(alpha: 0.2)
+                  : AppTheme.aiTeal.withValues(alpha: 0.2),
+          width: 1,
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.psychology, color: AppTheme.aiTeal, size: 16),
+          Icon(
+            isApproved
+                ? Icons.check_circle_outline
+                : isRejected
+                    ? Icons.cancel_outlined
+                    : Icons.psychology,
+            color: isApproved
+                ? AppTheme.aiTeal
+                : isRejected
+                    ? Colors.red
+                    : AppTheme.aiTeal,
+            size: 16,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Reasoning & Tool Call: $toolName',
+                  isApproved
+                      ? 'Approved Tool Action: $toolName'
+                      : isRejected
+                          ? 'Cancelled Tool Action: $toolName'
+                          : 'Reasoning & Tool Call: $toolName',
                   style: GoogleFonts.poppins(
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
-                    color: AppTheme.aiTeal,
+                    color: isApproved
+                        ? AppTheme.aiTeal
+                        : isRejected
+                            ? Colors.red
+                            : AppTheme.aiTeal,
                   ),
                 ),
                 const SizedBox(height: 2),

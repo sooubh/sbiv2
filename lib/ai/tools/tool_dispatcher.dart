@@ -264,6 +264,172 @@ class ToolDispatcher {
           'coins_awarded': 50,
         };
 
+      case 'manage_sip':
+        final action = args['action'] as String? ?? 'create';
+        final fundName = args['fund_name'] as String? ?? 'SBI Bluechip Fund';
+        final amount = (args['amount'] as num? ?? 5000.0).toDouble();
+
+        if (action == 'create') {
+          final profile = ref.read(userProfileProvider);
+          if (profile.balance < amount) {
+            return {'status': 'failed', 'reason': 'Insufficient balance to start SIP'};
+          }
+          ref.read(userProfileProvider.notifier).updateBalance(-amount);
+          ref.read(sipListProvider.notifier).createSIP(fundName, amount, category: fundName.contains('Small') ? 'Small Cap' : 'Large Cap');
+          ref.read(servicesProvider.notifier).activateService('srv_sip');
+          
+          final newTx = Transaction(
+            id: 'tx_sip_${DateTime.now().millisecondsSinceEpoch}',
+            amount: amount,
+            payee: '$fundName (SIP)',
+            category: 'Investment',
+            date: DateTime.now(),
+            type: 'debit',
+          );
+          ref.read(transactionsProvider.notifier).addTransaction(newTx);
+          ref.read(engagementProvider.notifier).addCoins(50);
+          return {'status': 'success', 'message': 'SIP of ₹${amount.toStringAsFixed(0)} registered in $fundName.'};
+        } else if (action == 'update') {
+          final sips = ref.read(sipListProvider);
+          final match = sips.firstWhere((s) => s.fundName.toLowerCase().contains(fundName.toLowerCase()) && s.status == 'active', 
+              orElse: () => sips.firstWhere((s) => s.status == 'active', 
+                  orElse: () => SipInvestment(id: '', fundName: '', amount: 0, nextPaymentDate: '', category: '', status: '')));
+          if (match.id.isEmpty) {
+            return {'status': 'failed', 'reason': 'No active SIP found to update'};
+          }
+          ref.read(sipListProvider.notifier).updateSIP(match.id, amount);
+          return {'status': 'success', 'message': 'SIP for ${match.fundName} updated to ₹${amount.toStringAsFixed(0)}.'};
+        } else if (action == 'cancel') {
+          final sips = ref.read(sipListProvider);
+          final match = sips.firstWhere((s) => s.fundName.toLowerCase().contains(fundName.toLowerCase()) && s.status == 'active', 
+              orElse: () => sips.firstWhere((s) => s.status == 'active', 
+                  orElse: () => SipInvestment(id: '', fundName: '', amount: 0, nextPaymentDate: '', category: '', status: '')));
+          if (match.id.isEmpty) {
+            return {'status': 'failed', 'reason': 'No active SIP found to cancel'};
+          }
+          ref.read(sipListProvider.notifier).cancelSIP(match.id);
+          return {'status': 'success', 'message': 'SIP for ${match.fundName} has been cancelled.'};
+        }
+        return {'status': 'failed', 'reason': 'Invalid action: $action'};
+
+      case 'manage_fd':
+        final action = args['action'] as String? ?? 'open';
+        final title = args['title'] as String? ?? 'Standard FD';
+        final amount = (args['amount'] as num? ?? 50000.0).toDouble();
+        final autoRenew = args['auto_renew'] as bool? ?? false;
+
+        if (action == 'open') {
+          final profile = ref.read(userProfileProvider);
+          if (profile.balance < amount) {
+            return {'status': 'failed', 'reason': 'Insufficient balance to open Fixed Deposit'};
+          }
+          ref.read(userProfileProvider.notifier).updateBalance(-amount);
+          ref.read(fdListProvider.notifier).openFD(title, amount, autoRenew: autoRenew);
+          ref.read(servicesProvider.notifier).activateService('srv_fd');
+          ref.read(engagementProvider.notifier).addCoins(50);
+
+          final newTx = Transaction(
+            id: 'tx_fd_${DateTime.now().millisecondsSinceEpoch}',
+            amount: amount,
+            payee: 'SBI Fixed Deposit ($title)',
+            category: 'Investment',
+            date: DateTime.now(),
+            type: 'debit',
+          );
+          ref.read(transactionsProvider.notifier).addTransaction(newTx);
+          return {'status': 'success', 'message': 'Fixed Deposit of ₹${amount.toStringAsFixed(0)} opened successfully.'};
+        } else if (action == 'close') {
+          final fds = ref.read(fdListProvider);
+          final match = fds.firstWhere((fd) => fd.title.toLowerCase().contains(title.toLowerCase()),
+              orElse: () => fds.isNotEmpty ? fds.first : FixedDeposit(id: '', title: '', principalAmount: 0, interestRate: 0, maturityDate: DateTime.now(), isAutoRenew: false));
+          if (match.id.isEmpty) {
+            return {'status': 'failed', 'reason': 'No active FD found to close'};
+          }
+          ref.read(userProfileProvider.notifier).updateBalance(match.principalAmount);
+          ref.read(fdListProvider.notifier).closeFD(match.id);
+          
+          final newTx = Transaction(
+            id: 'tx_fd_close_${DateTime.now().millisecondsSinceEpoch}',
+            amount: match.principalAmount,
+            payee: 'FD Closure Credit: ${match.title}',
+            category: 'Investment',
+            date: DateTime.now(),
+            type: 'credit',
+          );
+          ref.read(transactionsProvider.notifier).addTransaction(newTx);
+          return {'status': 'success', 'message': 'Fixed Deposit "${match.title}" closed prematurely. ₹${match.principalAmount.toStringAsFixed(0)} credited back.'};
+        } else if (action == 'renew') {
+          final fds = ref.read(fdListProvider);
+          final match = fds.firstWhere((fd) => fd.title.toLowerCase().contains(title.toLowerCase()),
+              orElse: () => fds.isNotEmpty ? fds.first : FixedDeposit(id: '', title: '', principalAmount: 0, interestRate: 0, maturityDate: DateTime.now(), isAutoRenew: false));
+          if (match.id.isEmpty) {
+            return {'status': 'failed', 'reason': 'No active FD found to renew'};
+          }
+          ref.read(fdListProvider.notifier).toggleAutoRenew(match.id);
+          return {'status': 'success', 'message': 'Fixed Deposit auto-renewal status updated.'};
+        }
+        return {'status': 'failed', 'reason': 'Invalid action: $action'};
+
+      case 'manage_loan':
+        final action = args['action'] as String? ?? 'pay_emi';
+        final loanId = args['loan_id'] as String? ?? 'loan_01';
+        final amount = (args['amount'] as num? ?? 28500.0).toDouble();
+
+        final profile = ref.read(userProfileProvider);
+        if (profile.balance < amount) {
+          return {'status': 'failed', 'reason': 'Insufficient account balance for loan action.'};
+        }
+
+        final loans = ref.read(loanListProvider);
+        final match = loans.firstWhere((l) => l.id == loanId, 
+            orElse: () => loans.isNotEmpty ? loans.first : Loan(id: '', title: '', accountNumber: '', outstandingBalance: 0, emiAmount: 0, nextDueDate: '', percentRepaid: 0));
+        if (match.id.isEmpty) {
+          return {'status': 'failed', 'reason': 'No active loan found.'};
+        }
+
+        ref.read(userProfileProvider.notifier).updateBalance(-amount);
+
+        if (action == 'pay_emi') {
+          ref.read(loanListProvider.notifier).payEMI(match.id, amount);
+          final newTx = Transaction(
+            id: 'tx_loan_emi_${DateTime.now().millisecondsSinceEpoch}',
+            amount: amount,
+            payee: 'SBI Loan EMI Payment',
+            category: 'Bills',
+            date: DateTime.now(),
+            type: 'debit',
+          );
+          ref.read(transactionsProvider.notifier).addTransaction(newTx);
+          return {'status': 'success', 'message': 'EMI of ₹${amount.toStringAsFixed(0)} successfully paid for loan: ${match.title}.'};
+        } else if (action == 'prepay') {
+          ref.read(loanListProvider.notifier).prepayLoan(match.id, amount);
+          final newTx = Transaction(
+            id: 'tx_loan_prepay_${DateTime.now().millisecondsSinceEpoch}',
+            amount: amount,
+            payee: 'SBI Loan Prepayment',
+            category: 'Investment',
+            date: DateTime.now(),
+            type: 'debit',
+          );
+          ref.read(transactionsProvider.notifier).addTransaction(newTx);
+          return {'status': 'success', 'message': 'Prepayment of ₹${amount.toStringAsFixed(0)} paid towards loan: ${match.title}.'};
+        }
+        return {'status': 'failed', 'reason': 'Invalid action: $action'};
+
+      case 'manage_budget':
+        final action = args['action'] as String? ?? 'set_limit';
+        final limit = (args['limit'] as num? ?? 45000.0).toDouble();
+        final category = args['category'] as String? ?? 'Others';
+
+        if (action == 'set_limit') {
+          ref.read(budgetProvider.notifier).setBudgetLimit(limit);
+          return {'status': 'success', 'message': 'Monthly budget limit updated to ₹${limit.toStringAsFixed(0)}.'};
+        } else if (action == 'set_category_limit') {
+          ref.read(budgetProvider.notifier).setCategoryLimit(category, limit);
+          return {'status': 'success', 'message': 'Budget limit for category "$category" updated to ₹${limit.toStringAsFixed(0)}.'};
+        }
+        return {'status': 'failed', 'reason': 'Invalid action: $action'};
+
       default:
         return {'status': 'error', 'reason': 'Unknown tool name: $name'};
     }
