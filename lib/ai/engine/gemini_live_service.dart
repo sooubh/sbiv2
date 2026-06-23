@@ -51,7 +51,7 @@ class GeminiLiveService {
       }
 
       final uri = Uri.parse(
-        "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=$apiKey",
+        "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$apiKey",
       );
 
       _channel = WebSocketChannel.connect(uri);
@@ -62,12 +62,22 @@ class GeminiLiveService {
           _handleIncomingMessage(message);
         },
         onError: (err, stack) {
-          if (kDebugMode) print("[LIVE_ERROR] WebSocket error: $err");
-          _triggerError("WebSocket error: $err");
+          final closeCode = _channel?.closeCode;
+          final closeReason = _channel?.closeReason;
+          final errorMsg = "WebSocket error: $err (Close Code: $closeCode, Reason: $closeReason)";
+          if (kDebugMode) print("[LIVE_ERROR] $errorMsg");
+          _triggerError(errorMsg);
           _handleDisconnect();
         },
         onDone: () {
-          if (kDebugMode) print("[LIVE_CLOSE] WebSocket closed.");
+          final closeCode = _channel?.closeCode;
+          final closeReason = _channel?.closeReason;
+          if (kDebugMode) {
+            print("[LIVE_CLOSE] WebSocket closed. Close Code: $closeCode, Reason: $closeReason");
+          }
+          if (closeCode != null && closeCode != 1000) {
+            _triggerError("WebSocket closed unexpectedly. Code: $closeCode, Reason: $closeReason");
+          }
           _handleDisconnect();
         },
       );
