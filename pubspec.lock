@@ -144,14 +144,6 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
-  gemini_live:
-    dependency: "direct main"
-    description:
-      name: gemini_live
-      sha256: fdf54b0e3b7e58c78e974b75f81307400a4e40119ee48bfce453adc747c880d1
-      url: "https://pub.dev"
-    source: hosted
-    version: "2026.6.6"
   google_fonts:
     dependency: "direct main"
     description:
@@ -542,21 +534,13 @@ packages:
     source: hosted
     version: "1.0.1"
   web_socket_channel:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: web_socket_channel
       sha256: d645757fb0f4773d602444000a8131ff5d48c9e47adfe9772652dd1a4f2d45c8
       url: "https://pub.dev"
     source: hosted
     version: "3.0.3"
-  web_socket_client:
-    dependency: transitive
-    description:
-      name: web_socket_client
-      sha256: "394789177aa3bc1b7b071622a1dbf52a4631d7ce23c555c39bb2523e92316b07"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.2.1"
   xdg_directories:
     dependency: transitive
     description:

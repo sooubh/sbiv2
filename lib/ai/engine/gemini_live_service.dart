@@ -1,10 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:gemini_live/gemini_live.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 class GeminiLiveService {
-  LiveSession? _session;
-  GoogleGenAI? _genAI;
+  WebSocketChannel? _channel;
+  StreamSubscription? _subscription;
   bool _isConnected = false;
   String? _sessionId;
   final bool _isSessionRestored = false;
@@ -40,71 +41,63 @@ class GeminiLiveService {
     }
 
     try {
-      if (kDebugMode) print("[LIVE_CONNECT] Attempting to connect...");
+      if (kDebugMode) print("[LIVE_CONNECT] Attempting to connect via WebSocketChannel...");
       disconnect();
 
-      _genAI = GoogleGenAI(apiKey: apiKey);
+      // Normalize model name (Gemini Live API expects "models/model-name")
+      String normalizedModel = model;
+      if (!normalizedModel.startsWith('models/')) {
+        normalizedModel = 'models/$normalizedModel';
+      }
 
-      final List<Tool> parsedTools = tools.map((t) => Tool.fromJson(t)).toList();
-
-      _session = await _genAI!.live.connect(
-        LiveConnectParameters(
-          model: model,
-          systemInstruction: Content(parts: [Part(text: systemInstruction)]),
-          config: GenerationConfig(
-            responseModalities: [Modality.TEXT],
-          ),
-          tools: parsedTools.isNotEmpty ? parsedTools : null,
-          sessionResumption: _sessionId != null
-              ? SessionResumptionConfig(handle: _sessionId!)
-              : null,
-          callbacks: LiveCallbacks(
-            onOpen: () {
-              if (kDebugMode) print("[LIVE_OPEN] WebSocket connected successfully.");
-              _isConnected = true;
-              onConnected?.call();
-            },
-            onMessage: (LiveServerMessage message) {
-              if (message.setupComplete != null) {
-                if (kDebugMode) print("[LIVE_SETUP_COMPLETE] Received setupComplete.");
-                // Note: The package may handle session restoration status internally
-              }
-
-              if (message.sessionResumptionUpdate != null) {
-                final newHandle = message.sessionResumptionUpdate!.newHandle;
-                if (newHandle != null) {
-                  _sessionId = newHandle;
-                  onSessionIdReceived?.call(_sessionId!);
-                }
-              }
-
-              if (message.text != null && message.text!.isNotEmpty) {
-                if (kDebugMode) print("[LIVE_MESSAGE] Received text message");
-                onMessageReceived?.call(message.text!);
-              }
-
-              if (message.toolCall != null && message.toolCall!.functionCalls != null) {
-                for (final call in message.toolCall!.functionCalls!) {
-                  if (call.id != null && call.name != null) {
-                    _pendingToolCalls[call.id!] = call.name!;
-                    onToolCallReceived?.call(call.name!, call.args ?? {}, call.id!);
-                  }
-                }
-              }
-            },
-            onError: (e, s) {
-              if (kDebugMode) print("[LIVE_ERROR] WebSocket error: $e");
-              _triggerError("WebSocket error: $e");
-              _handleDisconnect();
-            },
-            onClose: (code, reason) {
-              if (kDebugMode) print("[LIVE_CLOSE] WebSocket closed. Code: $code, Reason: $reason");
-              _handleDisconnect();
-            },
-          ),
-        ),
+      final uri = Uri.parse(
+        "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=$apiKey",
       );
 
+      _channel = WebSocketChannel.connect(uri);
+
+      // Listen to the stream
+      _subscription = _channel!.stream.listen(
+        (message) {
+          _handleIncomingMessage(message);
+        },
+        onError: (err, stack) {
+          if (kDebugMode) print("[LIVE_ERROR] WebSocket error: $err");
+          _triggerError("WebSocket error: $err");
+          _handleDisconnect();
+        },
+        onDone: () {
+          if (kDebugMode) print("[LIVE_CLOSE] WebSocket closed.");
+          _handleDisconnect();
+        },
+      );
+
+      // Immediately send setup configuration
+      final setupMessage = {
+        "setup": {
+          "model": normalizedModel,
+          "generationConfig": {
+            "responseModalities": ["TEXT"],
+          },
+          "systemInstruction": {
+            "parts": [
+              {"text": systemInstruction}
+            ]
+          },
+          "tools": tools.isNotEmpty
+              ? [
+                  {
+                    "functionDeclarations": tools,
+                  }
+                ]
+              : null,
+        }
+      };
+
+      _channel!.sink.add(jsonEncode(setupMessage));
+      
+      _isConnected = true;
+      onConnected?.call();
       return true;
     } catch (e) {
       _triggerError("Failed to connect: $e");
@@ -112,22 +105,109 @@ class GeminiLiveService {
     }
   }
 
+  void _handleIncomingMessage(dynamic messageStr) {
+    try {
+      final Map<String, dynamic> data = jsonDecode(messageStr as String);
+      
+      // 1. Setup complete
+      if (data.containsKey('setupComplete')) {
+        if (kDebugMode) print("[LIVE_SETUP_COMPLETE] Setup complete received.");
+      }
+
+      // 2. Session Resumption update
+      if (data.containsKey('sessionResumptionUpdate')) {
+        final resumption = data['sessionResumptionUpdate'] as Map<String, dynamic>;
+        final newHandle = resumption['newHandle'] as String?;
+        if (newHandle != null) {
+          _sessionId = newHandle;
+          onSessionIdReceived?.call(_sessionId!);
+        }
+      }
+
+      // 3. Text output
+      if (data.containsKey('serverContent')) {
+        final serverContent = data['serverContent'] as Map<String, dynamic>;
+        if (serverContent.containsKey('modelTurn')) {
+          final modelTurn = serverContent['modelTurn'] as Map<String, dynamic>;
+          if (modelTurn.containsKey('parts')) {
+            final parts = modelTurn['parts'] as List;
+            for (final part in parts) {
+              if (part is Map<String, dynamic> && part.containsKey('text')) {
+                final text = part['text'] as String;
+                if (text.isNotEmpty) {
+                  onMessageReceived?.call(text);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // 4. Tool calls
+      if (data.containsKey('toolCall')) {
+        final toolCall = data['toolCall'] as Map<String, dynamic>;
+        if (toolCall.containsKey('functionCalls')) {
+          final functionCalls = toolCall['functionCalls'] as List;
+          for (final call in functionCalls) {
+            if (call is Map<String, dynamic>) {
+              final id = call['id'] as String?;
+              final name = call['name'] as String?;
+              final args = call['args'] as Map<String, dynamic>? ?? {};
+              if (id != null && name != null) {
+                _pendingToolCalls[id] = name;
+                onToolCallReceived?.call(name, args, id);
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) print("[LIVE_PARSING_ERROR] Error parsing message: $e");
+    }
+  }
+
   void sendMessage(String text) {
-    if (!_isConnected || _session == null) {
+    if (!_isConnected || _channel == null) {
       _triggerError("Cannot send message. WebSocket is not connected.");
       return;
     }
-    _session!.sendText(text);
+    
+    final clientContentMessage = {
+      "clientContent": {
+        "turns": [
+          {
+            "role": "user",
+            "parts": [
+              {"text": text}
+            ]
+          }
+        ],
+        "turnComplete": true
+      }
+    };
+    
+    _channel!.sink.add(jsonEncode(clientContentMessage));
   }
 
   void sendToolResponse(String callId, Map<String, dynamic> output) {
-    if (!_isConnected || _session == null) return;
+    if (!_isConnected || _channel == null) return;
     final name = _pendingToolCalls.remove(callId) ?? '';
-    _session!.sendFunctionResponse(
-      id: callId,
-      name: name,
-      response: output,
-    );
+    
+    final toolResponseMessage = {
+      "toolResponse": {
+        "functionResponses": [
+          {
+            "name": name,
+            "id": callId,
+            "response": {
+              "output": output
+            }
+          }
+        ]
+      }
+    };
+    
+    _channel!.sink.add(jsonEncode(toolResponseMessage));
   }
 
   void _handleDisconnect() {
@@ -142,8 +222,9 @@ class GeminiLiveService {
   void disconnect() {
     _isConnected = false;
     _pendingToolCalls.clear();
-    _session?.close();
-    _session = null;
+    _subscription?.cancel();
+    _subscription = null;
+    _channel?.sink.close();
+    _channel = null;
   }
 }
-
