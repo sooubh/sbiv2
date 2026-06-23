@@ -36,28 +36,14 @@ class _BottomNavShellState extends ConsumerState<BottomNavShell> {
     final coins = ref.watch(engagementProvider).sbiCoins;
 
     Color statusColor = AppTheme.aiTeal;
-    String statusText = "Agent Connection: Active";
+    String statusText = "AI Engine: Simulated Mode";
 
-    if (agentState.status == AgentStatus.error) {
-      statusColor = AppTheme.accentOrange;
-      statusText = "Agent Status: Error (${agentState.lastError ?? 'Unknown'})";
-    } else if (agentState.status == AgentStatus.reconnecting) {
-      statusColor = AppTheme.accentOrange;
-      statusText = "Agent Status: Reconnecting...";
-    } else if (agentState.connectionStatus == "connected") {
+    if (agentState.transportType == "rest") {
       statusColor = AppTheme.accentGreen;
-      statusText = agentState.mode == AgentMode.onboarding 
-          ? "Agent Connection: Connected (Onboarding)" 
-          : "Agent Connection: Connected";
-    } else if (agentState.connectionStatus == "REST_ACTIVE") {
-      statusColor = AppTheme.accentGreen;
-      statusText = "Agent Connection: REST Fallback Active";
-    } else if (agentState.connectionStatus == "connecting") {
-      statusColor = Colors.amber;
-      statusText = "Agent Connection: Connecting...";
-    } else if (agentState.connectionStatus == "disconnected") {
-      statusColor = AppTheme.textSecondary;
-      statusText = "Agent Connection: Offline";
+      statusText = "AI Engine: REST (Active)";
+    } else if (agentState.status == AgentStatus.error) {
+      statusColor = AppTheme.accentOrange;
+      statusText = "AI Engine: Error (${agentState.lastError ?? 'Unknown'})";
     }
 
     return Scaffold(
@@ -104,7 +90,7 @@ class _BottomNavShellState extends ConsumerState<BottomNavShell> {
           // Coins indicator
           GestureDetector(
             onTap: () {
-              ref.read(currentNavIndexProvider.notifier).state = 3; // Navigate to Engagement Screen
+              ref.read(currentNavIndexProvider.notifier).state = 2; // Navigate to Engagement Screen
             },
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),

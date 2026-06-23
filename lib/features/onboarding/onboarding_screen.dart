@@ -78,19 +78,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     if (text.isEmpty) return;
     _textController.clear();
     
-    final profile = ref.read(userProfileProvider);
-    final activeStep = _determineActiveStep(profile);
-
-    // Save state locally first for instant feedback and backup
-    if (activeStep == 0) {
-      ref.read(userProfileProvider.notifier).updateName(text);
-    } else if (activeStep == 1) {
-      ref.read(userProfileProvider.notifier).updateMobileNumber(text);
-    } else if (activeStep == 4) {
-      ref.read(userProfileProvider.notifier).updateAddress(text);
-    }
-
-    // Send text to AICoordinator so it handles logs, simulation rules, and voice output
+    // Send text to AICoordinator so it handles logs, state transitions, and voice output
     ref.read(aiCoordinatorProvider.notifier).sendMessage(text);
   }
 

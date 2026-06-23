@@ -511,8 +511,9 @@ class ChatMessagesNotifier extends StateNotifier<List<ChatMessage>> {
 
 class TimelineNotifier extends StateNotifier<List<TimelineEntry>> {
   static const int _maxEntries = 50;
+  final String profileType;
 
-  TimelineNotifier() : super([]) {
+  TimelineNotifier(this.profileType) : super([]) {
     _load();
   }
 
@@ -543,17 +544,17 @@ class TimelineNotifier extends StateNotifier<List<TimelineEntry>> {
 
   void clear() {
     state = [];
-    Hive.box(kTimelineBox).clear();
+    Hive.box(kTimelineBox).delete('entries_$profileType');
   }
 
   void _save() {
     final box = Hive.box(kTimelineBox);
-    box.put('entries', state.map((e) => e.toJson()).toList());
+    box.put('entries_$profileType', state.map((e) => e.toJson()).toList());
   }
 
   void _load() {
     final box = Hive.box(kTimelineBox);
-    final raw = box.get('entries');
+    final raw = box.get('entries_$profileType');
     if (raw != null) {
       try {
         final list = List<dynamic>.from(raw);
@@ -569,7 +570,8 @@ class TimelineNotifier extends StateNotifier<List<TimelineEntry>> {
 
 final timelineProvider =
     StateNotifierProvider<TimelineNotifier, List<TimelineEntry>>((ref) {
-  return TimelineNotifier();
+  final profileType = ref.watch(profileTypeProvider);
+  return TimelineNotifier(profileType);
 });
 
 class AiModelConfig {

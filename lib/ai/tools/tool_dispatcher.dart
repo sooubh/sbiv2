@@ -12,6 +12,31 @@ class ToolDispatcher {
     ref.read(agentMemoryProvider.notifier).logToolExecution(name);
 
     switch (name) {
+      case 'update_profile_info':
+        final nameVal = args['name'] as String?;
+        final mobileVal = args['mobile_number'] as String?;
+        final addressVal = args['address'] as String?;
+
+        if (nameVal != null && nameVal.isNotEmpty) {
+          ref.read(userProfileProvider.notifier).updateName(nameVal);
+        }
+        if (mobileVal != null && mobileVal.isNotEmpty) {
+          ref.read(userProfileProvider.notifier).updateMobileNumber(mobileVal);
+        }
+        if (addressVal != null && addressVal.isNotEmpty) {
+          ref.read(userProfileProvider.notifier).updateAddress(addressVal);
+        }
+
+        return {
+          'status': 'success',
+          'message': 'Profile updated successfully.',
+          'updated_fields': {
+            if (nameVal != null) 'name': nameVal,
+            if (mobileVal != null) 'mobile_number': mobileVal,
+            if (addressVal != null) 'address': addressVal,
+          }
+        };
+
       case 'qualify_lead':
         final incomeBracket = args['income_bracket'] ?? '0-5 Lakhs';
         final bankingNeed = args['banking_need'] ?? 'Savings & UPI';

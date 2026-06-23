@@ -59,16 +59,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final voiceState = ref.watch(voiceStateProvider);
     final aiState = ref.watch(aiCoordinatorProvider);
 
-    String connectionStatus = agentState.connectionStatus.toUpperCase();
-    Color connectionColor = AppTheme.textSecondary;
-    if (connectionStatus == "CONNECTED" || connectionStatus == "REST_ACTIVE") {
-      connectionColor = AppTheme.accentGreen;
-    } else if (connectionStatus == "CONNECTING") {
-      connectionColor = Colors.amber;
-    } else if (connectionStatus == "DISCONNECTED") {
-      connectionColor = AppTheme.accentOrange;
-    }
-
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -160,16 +150,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: AppTheme.textPrimary),
                 ),
                 const SizedBox(height: 12),
-                TextField(
-                  controller: _liveModelController,
-                  decoration: InputDecoration(
-                    labelText: 'Gemini Live Model',
-                    labelStyle: GoogleFonts.inter(fontSize: 12),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  ),
-                ),
-                const SizedBox(height: 16),
+
                 TextField(
                   controller: _restModelController,
                   decoration: InputDecoration(
@@ -221,9 +202,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: Column(
               children: [
                 _buildStatusRow(
-                  label: 'Gemini Live Status',
-                  value: connectionStatus,
-                  valueColor: connectionColor,
+                  label: 'AI Engine Transport',
+                  value: agentState.transportType.toUpperCase(),
+                  valueColor: agentState.transportType == "rest" ? AppTheme.accentGreen : AppTheme.aiTeal,
                   icon: Icons.wifi,
                 ),
                 const Divider(height: 24),
@@ -245,14 +226,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 24),
 
-          // Live WebSocket Diagnostics Section
-          Text(
-            'LIVE WEBSOCKET DIAGNOSTICS',
-            style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.textSecondary, letterSpacing: 1.0),
-          ),
-          const SizedBox(height: 10),
-          const WebSocketDiagnosticsCard(),
-          const SizedBox(height: 24),
+
 
           // Developer Access
           Text(

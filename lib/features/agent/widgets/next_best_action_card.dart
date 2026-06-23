@@ -10,9 +10,7 @@ import 'package:sbiv2/ai/engine/ai_coordinator.dart';
 import 'package:sbiv2/features/agent/models/timeline_entry.dart';
 
 class NextBestActionCard extends ConsumerWidget {
-  final Function(int)? onNavigate;
-
-  const NextBestActionCard({super.key, this.onNavigate});
+  const NextBestActionCard({super.key});
 
   void _handleAction(BuildContext context, WidgetRef ref, NextBestAction action) {
     // Log acceptance to timeline
@@ -35,50 +33,34 @@ class NextBestActionCard extends ConsumerWidget {
     // Process action based on type
     switch (action.type) {
       case NextBestActionType.kyc:
-        if (onNavigate != null) {
-          onNavigate!(1); // Go to Onboarding (KYC App) screen
-        }
+        ref.read(currentNavIndexProvider.notifier).state = 3; // Go to AI Chat screen
         break;
       case NextBestActionType.sip:
         ref.read(aiCoordinatorProvider.notifier).sendMessage("Resume SIP");
-        if (onNavigate != null) {
-          onNavigate!(4); // Go to Chat screen to watch tool execution
-        }
+        ref.read(currentNavIndexProvider.notifier).state = 3; // Go to AI Chat screen
         break;
       case NextBestActionType.lowBalance:
         ref.read(aiCoordinatorProvider.notifier).sendMessage("Check Balance");
-        if (onNavigate != null) {
-          onNavigate!(4); // Go to Chat screen
-        }
+        ref.read(currentNavIndexProvider.notifier).state = 3; // Go to AI Chat screen
         break;
       case NextBestActionType.fd:
         ref.read(aiCoordinatorProvider.notifier).sendMessage("Open FD");
-        if (onNavigate != null) {
-          onNavigate!(4); // Go to Chat screen
-        }
+        ref.read(currentNavIndexProvider.notifier).state = 3; // Go to AI Chat screen
         break;
       case NextBestActionType.salarySave:
         ref.read(aiCoordinatorProvider.notifier).sendMessage("Boost Goal");
-        if (onNavigate != null) {
-          onNavigate!(4); // Go to Chat screen
-        }
+        ref.read(currentNavIndexProvider.notifier).state = 3; // Go to AI Chat screen
         break;
       case NextBestActionType.spendingSpike:
         ref.read(aiCoordinatorProvider.notifier).sendMessage("Review spending spike");
-        if (onNavigate != null) {
-          onNavigate!(4); // Go to Chat screen
-        }
+        ref.read(currentNavIndexProvider.notifier).state = 3; // Go to AI Chat screen
         break;
       case NextBestActionType.goalNudge:
         ref.read(aiCoordinatorProvider.notifier).sendMessage("Boost goal");
-        if (onNavigate != null) {
-          onNavigate!(4); // Go to Chat screen
-        }
+        ref.read(currentNavIndexProvider.notifier).state = 3; // Go to AI Chat screen
         break;
       case NextBestActionType.healthSummary:
-        if (onNavigate != null) {
-          onNavigate!(3); // Go to Engagement / insights screen
-        }
+        ref.read(currentNavIndexProvider.notifier).state = 2; // Go to Engagement / insights screen
         break;
     }
   }

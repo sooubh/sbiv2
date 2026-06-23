@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:sbiv2/core/theme/app_theme.dart';
 import 'package:sbiv2/data/repositories/state_providers.dart';
+import 'package:sbiv2/ai/engine/ai_coordinator.dart';
 import 'package:sbiv2/ai/engine/pattern_engine.dart';
 import 'package:sbiv2/features/agent/widgets/agent_timeline.dart';
 import 'package:sbiv2/features/agent/widgets/next_best_action_card.dart';
@@ -16,16 +17,11 @@ class HomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final profile = ref.watch(userProfileProvider);
     final txs = ref.watch(transactionsProvider);
-    final recommendations = ref.watch(recommendationsProvider);
     final memory = ref.watch(agentMemoryProvider);
     final profileType = ref.watch(profileTypeProvider);
 
     // Analyze transactions to get signals
     final signals = PatternEngine.analyze(profile, txs);
-
-    // Get next best action (highest priority recommendation that is not completed)
-    final activeRecommendations = recommendations.where((r) => !r.isCompleted).toList();
-    final nextBestAction = activeRecommendations.isNotEmpty ? activeRecommendations.first : null;
 
     // Get the core signal text for the "Agent is watching" card
     String agentInsightTitle = "SBI Agent Advisor";
@@ -317,24 +313,40 @@ class HomeScreen extends ConsumerWidget {
                       label: 'UPI Pay',
                       color: AppTheme.primary,
                       enabled: profile.upiEnabled,
+                      onTap: () {
+                        ref.read(currentNavIndexProvider.notifier).state = 3;
+                        ref.read(aiCoordinatorProvider.notifier).sendMessage("Pay ₹1000 via UPI");
+                      },
                     ),
                     _buildQuickActionItem(
                       icon: Icons.account_balance,
                       label: 'Open FD',
                       color: AppTheme.primary,
                       enabled: profile.kycComplete,
+                      onTap: () {
+                        ref.read(currentNavIndexProvider.notifier).state = 3;
+                        ref.read(aiCoordinatorProvider.notifier).sendMessage("Open FD of ₹10000");
+                      },
                     ),
                     _buildQuickActionItem(
                       icon: Icons.send,
                       label: 'Send Money',
                       color: AppTheme.primary,
                       enabled: profile.kycComplete,
+                      onTap: () {
+                        ref.read(currentNavIndexProvider.notifier).state = 3;
+                        ref.read(aiCoordinatorProvider.notifier).sendMessage("Send ₹2000 to Mom");
+                      },
                     ),
                     _buildQuickActionItem(
                       icon: Icons.trending_up,
                       label: 'SIP (MF)',
                       color: AppTheme.primary,
                       enabled: profile.kycComplete,
+                      onTap: () {
+                        ref.read(currentNavIndexProvider.notifier).state = 3;
+                        ref.read(aiCoordinatorProvider.notifier).sendMessage("Start SIP of ₹5000 in SBI Bluechip Fund");
+                      },
                     ),
                   ],
                 ),
@@ -342,140 +354,6 @@ class HomeScreen extends ConsumerWidget {
             ),
           ),
 
-          // Next Best Action Recommendation
-          if (nextBestAction != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Next Best Action',
-                    style: GoogleFonts.poppins(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: AppTheme.aiTeal.withValues(alpha: 0.2),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Row(
-                                  children: [
-                                    const Icon(Icons.star, color: AppTheme.aiTeal, size: 14),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      'Agent Pick',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                        color: AppTheme.aiTeal,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const Spacer(),
-                              Text(
-                                'Priority #${nextBestAction.priority}',
-                                style: GoogleFonts.inter(
-                                  fontSize: 11,
-                                  color: AppTheme.textSecondary,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            nextBestAction.title,
-                            style: GoogleFonts.poppins(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: AppTheme.textPrimary,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            nextBestAction.subtitle,
-                            style: GoogleFonts.inter(
-                              fontSize: 13,
-                              color: AppTheme.textSecondary,
-                            ),
-                          ),
-                          const Divider(height: 24, color: AppTheme.border),
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Icon(Icons.info_outline, color: AppTheme.aiTeal, size: 16),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  'Reason: ${nextBestAction.aiReason}',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 12,
-                                    color: AppTheme.textSecondary,
-                                    fontStyle: FontStyle.italic,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppTheme.primary,
-                                padding: const EdgeInsets.symmetric(vertical: 12),
-                              ),
-                              onPressed: () {
-                                // Mark as completed and execute action
-                                ref.read(recommendationsProvider.notifier).completeRecommendation(nextBestAction.id);
-                                // Give coins
-                                ref.read(engagementProvider.notifier).addCoins(40);
-                                ref.read(engagementProvider.notifier).addAchievement('Action Completed');
-
-                                if (nextBestAction.id == 'rec_02') {
-                                  // Re-activate SIP
-                                  ref.read(servicesProvider.notifier).activateService('srv_sip');
-                                } else if (nextBestAction.id == 'rec_01') {
-                                  // Open FD
-                                  ref.read(servicesProvider.notifier).activateService('srv_fd');
-                                }
-
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('Agent executed: ${nextBestAction.title}! Awarded 40 Coins.'),
-                                    backgroundColor: AppTheme.accentGreen,
-                                  ),
-                                );
-                              },
-                              child: Text(
-                                nextBestAction.id == 'rec_02' ? 'Resume SIP (1-Click)' : 'Activate Now',
-                                style: GoogleFonts.inter(fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
           const SizedBox(height: 32),
         ],
       ),
@@ -487,6 +365,7 @@ class HomeScreen extends ConsumerWidget {
     required String label,
     required Color color,
     required bool enabled,
+    VoidCallback? onTap,
   }) {
     return Container(
       decoration: BoxDecoration(
@@ -498,11 +377,7 @@ class HomeScreen extends ConsumerWidget {
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
-          onTap: enabled
-              ? () {
-                  // Standard quick action tap
-                }
-              : null,
+          onTap: enabled ? onTap : null,
           child: Opacity(
             opacity: enabled ? 1.0 : 0.4,
             child: Column(

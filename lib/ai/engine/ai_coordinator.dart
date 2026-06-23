@@ -79,7 +79,6 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
 
   // Sequential Tool Call Queue
   final List<ToolCallItem> _toolCallQueue = [];
-  bool _isProcessingToolCall = false;
 
   // Pending confirmations map
   final Map<String, Completer<bool>> _pendingConfirmations = {};
@@ -110,7 +109,6 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
     _ref.listen(profileTypeProvider, (previous, next) {
       _restHistory.clear();
       _toolCallQueue.clear();
-      _isProcessingToolCall = false;
       final memory = _ref.read(agentMemoryProvider);
       final isOnboarding = !memory.onboardingCompleted && next == 'A';
       _ref.read(agentStateProvider.notifier).setMode(
@@ -121,32 +119,6 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
     });
 
     _initializeService();
-  }
-
-  void _enqueueToolCall(
-    String name,
-    Map<String, dynamic> args,
-    String callId,
-    Future<void> Function(String name, Map<String, dynamic> args, String callId) action,
-  ) {
-    _toolCallQueue.add(ToolCallItem(name: name, args: args, callId: callId, action: action));
-    _processNextToolCall();
-  }
-
-  Future<void> _processNextToolCall() async {
-    if (_isProcessingToolCall || _toolCallQueue.isEmpty) return;
-
-    _isProcessingToolCall = true;
-    final item = _toolCallQueue.removeAt(0);
-
-    try {
-      await item.action(item.name, item.args, item.callId);
-    } catch (e) {
-      if (kDebugMode) print("Error processing queued tool call: $e");
-    } finally {
-      _isProcessingToolCall = false;
-      _processNextToolCall();
-    }
   }
 
   Future<void> _initializeService() async {
@@ -174,199 +146,23 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
       return;
     }
 
-    state = state.copyWith(isConnecting: true, error: null);
-    agentState.setConnectionStatus("connecting");
-    agentState.setStatus(AgentStatus.reconnecting);
+    state = state.copyWith(mode: AIServiceMode.rest, isConnecting: false, error: null);
+    agentState.setConnectionStatus("REST_ACTIVE");
+    agentState.setStatus(AgentStatus.idle);
     agentState.updateTransportInfo(
-      transportType: "live",
-      webSocketStatus: "connecting",
-      restStatus: "inactive",
-      decisionSource: "Gemini Live",
+      transportType: "rest",
+      webSocketStatus: "disconnected",
+      restStatus: "active",
+      decisionSource: "Gemini REST",
     );
-
-    final sysPrompt = _buildSystemPrompt();
-    final tools = _getToolDeclarations();
-
-    // Try Live WebSockets first
-    _liveService.disconnect();
-    
-    _liveService.onConnected = () {
-      state = state.copyWith(mode: AIServiceMode.live, isConnecting: false, isThinking: false);
-      agentState.setConnectionStatus("connected");
-      agentState.setStatus(AgentStatus.idle);
-      agentState.updateTransportInfo(
-        transportType: "live",
-        webSocketStatus: "connected",
-        restStatus: "inactive",
-        decisionSource: "Gemini Live",
-      );
-      eventNotifier.emit(AgentEventType.connected, "Connected to Gemini Live");
-      _ref.read(timelineProvider.notifier).log(
-        type: TimelineEntryType.connection,
-        title: 'Gemini Live Connected',
-        description: 'WebSocket session established successfully.',
-        status: TimelineEntryStatus.success,
-      );
-      _triggerProactiveWelcome();
-    };
-
-    _liveService.onMessageReceived = (text) {
-      state = state.copyWith(isThinking: false);
-      agentState.setStatus(AgentStatus.idle);
-      agentState.setLastAgentMessage(text);
-      _addMessageToUI('agent', text);
-      // Speak the agent response (no-op if TTS unavailable)
-      _ref.read(voiceServiceProvider).speak(text);
-    };
-
-    // Reconnection Lifecycles
-    _liveService.onReconnectStarted = () {
-      agentState.setConnectionStatus("reconnecting");
-      agentState.setStatus(AgentStatus.reconnecting);
-      agentState.updateTransportInfo(
-        transportType: "live",
-        webSocketStatus: "connecting",
-        restStatus: "inactive",
-        decisionSource: "Gemini Live",
-      );
-      eventNotifier.emit(AgentEventType.reconnectStarted, "Gemini Live disconnected. Reconnecting...");
-      _ref.read(timelineProvider.notifier).log(
-        type: TimelineEntryType.connection,
-        title: 'Reconnecting to Gemini Live',
-        description: 'WebSocket dropped. Auto-reconnect in progress.',
-        status: TimelineEntryStatus.running,
-      );
-    };
-
-    _liveService.onReconnectSuccess = () {
-      state = state.copyWith(mode: AIServiceMode.live, isConnecting: false, isThinking: false);
-      agentState.setConnectionStatus("connected");
-      agentState.setStatus(AgentStatus.idle);
-      agentState.updateTransportInfo(
-        transportType: "live",
-        webSocketStatus: "connected",
-        restStatus: "inactive",
-        decisionSource: "Gemini Live",
-      );
-      
-      final isRestored = _liveService.isSessionRestored;
-      eventNotifier.emit(
-        isRestored ? AgentEventType.sessionRestored : AgentEventType.reconnectSuccess,
-        isRestored ? "Live session successfully restored" : "Successfully reconnected to Gemini Live",
-      );
-      _ref.read(timelineProvider.notifier).log(
-        type: TimelineEntryType.connection,
-        title: isRestored ? 'Session Restored' : 'Reconnected',
-        description: isRestored
-            ? 'Gemini Live session resumed from previous context.'
-            : 'WebSocket reconnected successfully.',
-        status: TimelineEntryStatus.success,
-      );
-      _triggerProactiveWelcome();
-    };
-
-    _liveService.onReconnectFailed = (err) {
-      final prevError = agentState.state.lastError ?? err;
-      agentState.recoverToRest(prevError);
-      agentState.updateTransportInfo(
-        transportType: "rest",
-        webSocketStatus: "error",
-        restStatus: "active",
-        decisionSource: "Gemini REST",
-      );
-      eventNotifier.emit(AgentEventType.reconnectFailed, "Reconnection failed: $err");
-      _ref.read(timelineProvider.notifier).log(
-        type: TimelineEntryType.connection,
-        title: 'Reconnect Failed',
-        description: 'Falling back to REST. Error: $err',
-        status: TimelineEntryStatus.failed,
-      );
-      // Fallback internally to REST but preserve connection status value in state
-      state = state.copyWith(mode: AIServiceMode.rest, error: err);
-    };
-
-    _liveService.onToolCallReceived = (name, args, callId) {
-      _enqueueToolCall(name, args, callId, (name, args, callId) async {
-        state = state.copyWith(isThinking: true);
-        agentState.setStatus(AgentStatus.thinking);
-        
-        final toolCallId = 'live_call_${DateTime.now().millisecondsSinceEpoch}';
-        final completer = Completer<bool>();
-        _pendingConfirmations[toolCallId] = completer;
-
-        _addMessageToUI(
-          'system',
-          "Agent wants to execute tool: $name",
-          toolCall: {'name': name, 'args': args},
-          toolStatus: 'pending',
-          toolCallId: toolCallId,
-        );
-
-        final approved = await completer.future;
-
-        if (approved) {
-          final output = await _executeTool(name, args);
-          if (output['status'] == 'failed' || output['status'] == 'error') {
-            final reason = output['reason'] ?? 'Tool call failed';
-            _addMessageToUI('tool', "Agent tool $name failed ❌: $reason", toolCall: {'output': output});
-          } else {
-            _addMessageToUI('tool', "Agent completed $name ✅", toolCall: {'output': output});
-          }
-          _liveService.sendToolResponse(callId, output);
-        } else {
-          final output = {'status': 'failed', 'reason': 'User rejected/cancelled tool execution.'};
-          _addMessageToUI('tool', "Agent tool execution for $name was cancelled by user ❌", toolCall: {'output': output});
-          _liveService.sendToolResponse(callId, output);
-        }
-
-        state = state.copyWith(isThinking: false);
-        if (agentState.state.status != AgentStatus.error) {
-          agentState.setStatus(AgentStatus.idle);
-        }
-      });
-    };
-
-    _liveService.onError = (err) {
-      if (kDebugMode) print("Live error: $err");
-      agentState.setError(err);
-      agentState.updateTransportInfo(
-        transportType: agentState.state.transportType,
-        webSocketStatus: "error",
-        restStatus: agentState.state.restStatus,
-        decisionSource: agentState.state.decisionSource,
-      );
-      eventNotifier.emit(AgentEventType.error, "Gemini Live error: $err");
-    };
-
-    _liveService.onDisconnected = () {
-      eventNotifier.emit(AgentEventType.disconnected, "Gemini Live connection lost");
-    };
-
-    _liveService.onSessionIdReceived = (sessionId) {
-      agentState.setSessionId(sessionId);
-    };
-
-    final modelConfig = _ref.read(aiModelConfigProvider);
-    final connected = await _liveService.connect(
-      apiKey: apiKey,
-      systemInstruction: sysPrompt,
-      tools: tools,
-      model: modelConfig.liveModel,
+    eventNotifier.emit(AgentEventType.connected, "Connected to Gemini REST");
+    _ref.read(timelineProvider.notifier).log(
+      type: TimelineEntryType.connection,
+      title: 'Gemini REST Active',
+      description: 'REST session active with Gemini API.',
+      status: TimelineEntryStatus.success,
     );
-
-    if (!connected) {
-      // Try REST
-      state = state.copyWith(mode: AIServiceMode.rest, isConnecting: false);
-      final prevError = agentState.state.lastError ?? "WebSocket connect failed";
-      agentState.recoverToRest(prevError);
-      agentState.updateTransportInfo(
-        transportType: "rest",
-        webSocketStatus: "error",
-        restStatus: "active",
-        decisionSource: "Gemini REST",
-      );
-      eventNotifier.emit(AgentEventType.disconnected, "Gemini Live initial connect failed. REST fallback active.");
-    }
+    _triggerProactiveWelcome();
   }
 
   // Unified tool caller that handles agent state machine transitions and failures
@@ -516,6 +312,19 @@ BEHAVIOR RULES:
 
     if (isOnboarding) {
       return [
+        {
+          'name': 'update_profile_info',
+          'description': 'Updates user profile information such as name, mobile number, or permanent address.',
+          'parameters': {
+            'type': 'OBJECT',
+            'properties': {
+              'name': {'type': 'STRING', 'description': 'Full name of the user (e.g. Rohan)'},
+              'mobile_number': {'type': 'STRING', 'description': '10-digit mobile number of the user'},
+              'address': {'type': 'STRING', 'description': 'Permanent address of the user'}
+            },
+            'required': []
+          }
+        },
         {
           'name': 'start_kyc',
           'description': 'Advances user KYC step verification sequentially.',
@@ -714,32 +523,39 @@ BEHAVIOR RULES:
             final name = funcCall['name'];
             final args = Map<String, dynamic>.from(funcCall['args'] ?? {});
             
-            final toolCallId = 'rest_call_${DateTime.now().millisecondsSinceEpoch}';
-            final completer = Completer<bool>();
-            _pendingConfirmations[toolCallId] = completer;
-
-            _addMessageToUI(
-              'system',
-              "Agent wants to execute tool: $name",
-              toolCall: {'name': name, 'args': args},
-              toolStatus: 'pending',
-              toolCallId: toolCallId,
-            );
-
-            final approved = await completer.future;
             Map<String, dynamic> output;
 
-            if (approved) {
+            if (name == 'update_profile_info') {
+              // Auto-approve profile updates for a smooth conversational flow
               output = await _executeTool(name, args);
-              if (output['status'] == 'failed' || output['status'] == 'error') {
-                final reason = output['reason'] ?? 'Tool call failed';
-                _addMessageToUI('tool', "Agent tool $name failed ❌: $reason", toolCall: {'output': output});
-              } else {
-                _addMessageToUI('tool', "Agent completed $name ✅", toolCall: {'output': output});
-              }
+              _addMessageToUI('tool', "Agent updated profile info ✅", toolCall: {'output': output});
             } else {
-              output = {'status': 'failed', 'reason': 'User rejected/cancelled tool execution.'};
-              _addMessageToUI('tool', "Agent tool execution for $name was cancelled by user ❌", toolCall: {'output': output});
+              final toolCallId = 'rest_call_${DateTime.now().millisecondsSinceEpoch}';
+              final completer = Completer<bool>();
+              _pendingConfirmations[toolCallId] = completer;
+
+              _addMessageToUI(
+                'system',
+                "Agent wants to execute tool: $name",
+                toolCall: {'name': name, 'args': args},
+                toolStatus: 'pending',
+                toolCallId: toolCallId,
+              );
+
+              final approved = await completer.future;
+
+              if (approved) {
+                output = await _executeTool(name, args);
+                if (output['status'] == 'failed' || output['status'] == 'error') {
+                  final reason = output['reason'] ?? 'Tool call failed';
+                  _addMessageToUI('tool', "Agent tool $name failed ❌: $reason", toolCall: {'output': output});
+                } else {
+                  _addMessageToUI('tool', "Agent completed $name ✅", toolCall: {'output': output});
+                }
+              } else {
+                output = {'status': 'failed', 'reason': 'User rejected/cancelled tool execution.'};
+                _addMessageToUI('tool', "Agent tool execution for $name was cancelled by user ❌", toolCall: {'output': output});
+              }
             }
 
             // Send tool response to REST in the next call
@@ -818,10 +634,12 @@ BEHAVIOR RULES:
     if (isOnboarding) {
       // Rohan Onboarding Chat Simulation
       if (profile.name.isEmpty) {
-        agentInitialText = "Aapka swagat hai! Let's start. Please enter your full name.";
-        agentFinalText = "Namaste Rohan! Name saved. Now please enter your 10-digit mobile number.";
+        _ref.read(userProfileProvider.notifier).updateName(text);
+        agentInitialText = "Name validation protocol complete.";
+        agentFinalText = "Namaste $text! Name saved. Now please enter your 10-digit mobile number.";
       } else if (profile.mobileNumber.isEmpty) {
-        agentInitialText = "Mobile number record status starting...";
+        _ref.read(userProfileProvider.notifier).updateMobileNumber(text);
+        agentInitialText = "Registering mobile connection details...";
         agentFinalText = "Got your mobile number. Now please enter your 10-character PAN card number to initiate identity check.";
       } else if (profile.kycStep == 'none') {
         agentInitialText = "Understood. PAN Verification check initialise kar raha hun. API parameters fetch ho rahe hain...";
@@ -833,7 +651,8 @@ BEHAVIOR RULES:
         triggerTool = "start_kyc";
         toolArgs = {'step': 'aadhaar', 'user_confirmed': true};
         agentFinalText = "Aadhaar link verified! ✅ 25 SBI Coins earned. Now, please enter your permanent address.";
-      } else if (profile.kycStep == 'aadhaar') {
+      } else if (profile.kycStep == 'aadhaar' && profile.address.isEmpty) {
+        _ref.read(userProfileProvider.notifier).updateAddress(text);
         agentInitialText = "Address validation started...";
         agentFinalText = "Address saved. We are ready for Video KYC. Tap the button below to start camera facial checks.";
       } else if (profile.kycStep == 'video_kyc') {
@@ -842,10 +661,10 @@ BEHAVIOR RULES:
         toolArgs = {'step': 'video_kyc', 'user_confirmed': true};
         agentFinalText = "Video KYC verification completed! 🎉 50 SBI Coins awarded. Finally, let's setup your UPI VPA to enable digital payments. Enter your preferred VPA (e.g. name@sbi).";
       } else {
-        agentInitialText = "Activating UPI quick pay protocol... Allocating primary VPA rohan@sbi.";
+        agentInitialText = "Activating UPI quick pay protocol... Allocating primary VPA $text.";
         triggerTool = "activate_upi";
-        toolArgs = {'vpa': 'rohan@sbi'};
-        agentFinalText = "UPI set up complete! ✅ VPA: rohan@sbi is active. 30 SBI Coins earned. Welcome to YONO SBI 2.0. You are ready to enter Banking Mode!";
+        toolArgs = {'vpa': text};
+        agentFinalText = "UPI set up complete! ✅ VPA: $text is active. 30 SBI Coins earned. Welcome to YONO SBI 2.0. You are ready to enter Banking Mode!";
       }
     } else {
       // Regex Matchers for Banking Simulation
