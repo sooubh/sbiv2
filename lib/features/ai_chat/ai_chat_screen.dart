@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:hugeicons/hugeicons.dart';
 import 'package:sbiv2/core/theme/app_theme.dart';
 import 'package:sbiv2/data/repositories/state_providers.dart';
 import 'package:sbiv2/ai/engine/ai_coordinator.dart';
@@ -78,10 +79,14 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
             children: [
               Row(
                 children: [
-                  const Icon(Icons.psychology, color: AppTheme.aiTeal, size: 28),
+                  const HugeIcon(
+                    icon: HugeIcons.strokeRoundedBrain,
+                    color: AppTheme.aiTeal,
+                    size: 28,
+                  ),
                   const SizedBox(width: 12),
                   Text(
-                    'AI Decision Rationale',
+                    'AI Decision',
                     style: GoogleFonts.poppins(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
@@ -92,19 +97,19 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
               ),
               const SizedBox(height: 16),
               Text(
-                'How the Agent processes your requests:',
+                'Processing:',
                 style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.textPrimary),
               ),
               const SizedBox(height: 8),
               Text(
-                '1. Parses intent: Extracts transfer details (recipient, amount), goal boosts, or investment desires.\n'
-                '2. Evaluates context: Checks if savings buffer is adequate (PatternEngine check).\n'
-                '3. Autonomously triggers tool actions (execute_transfer, boost_goal, suggest_service) and completes state modifications without requiring UI clicks.',
+                '1. Parses intent (e.g. transfers, goals, investments).\n'
+                '2. Evaluates context (checks savings buffer).\n'
+                '3. Executes tool actions autonomously.',
                 style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 12, height: 1.5),
               ),
               const SizedBox(height: 16),
               Text(
-                'Active Pattern Engine Context:',
+                'Pattern Context:',
                 style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.textPrimary),
               ),
               const SizedBox(height: 8),
@@ -126,7 +131,7 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('Got it'),
+                  child: const Text('OK'),
                 ),
               )
             ],
@@ -163,14 +168,18 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
             children: [
               CircleAvatar(
                 backgroundColor: AppTheme.aiTeal.withValues(alpha: 0.2),
-                child: const Icon(Icons.chat, color: AppTheme.aiTeal),
+                child: const HugeIcon(
+                  icon: HugeIcons.strokeRoundedBubbleChat,
+                  color: AppTheme.aiTeal,
+                  size: 24,
+                ),
               ),
               const SizedBox(width: 12),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'SBI Conversational Assistant',
+                    'AI Chat',
                     style: GoogleFonts.poppins(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
@@ -178,7 +187,7 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
                     ),
                   ),
                   Text(
-                    'Zero-tap banking assistant',
+                    'Zero-tap Assistant',
                     style: GoogleFonts.inter(
                       color: Colors.white70,
                       fontSize: 11,
@@ -189,7 +198,11 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
               const Spacer(),
               // Floating Explainability Button
               IconButton(
-                icon: const Icon(Icons.help_outline, color: Colors.white),
+                icon: const HugeIcon(
+                  icon: HugeIcons.strokeRoundedHelpCircle,
+                  color: Colors.white,
+                  size: 24,
+                ),
                 tooltip: 'Why did agent do this?',
                 onPressed: () => _showExplainabilitySheet(context),
               ),
@@ -210,10 +223,13 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
             itemBuilder: (context, index) {
               final msg = messages[index];
               if (msg.sender == 'system') {
-                return _buildSystemLog(msg);
+                if (msg.toolStatus == 'pending') {
+                  return _buildSystemLog(msg);
+                }
+                return const SizedBox.shrink();
               }
               if (msg.sender == 'tool') {
-                return _buildToolResult(msg.text, msg.toolCall);
+                return const SizedBox.shrink();
               }
               final isUser = msg.sender == 'user';
               return _buildChatBubble(msg.text, isUser);
@@ -268,11 +284,15 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
                 childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 backgroundColor: AppTheme.background,
                 collapsedBackgroundColor: AppTheme.background,
-                leading: const Icon(Icons.history, color: AppTheme.aiTeal, size: 18),
+                leading: const HugeIcon(
+                  icon: HugeIcons.strokeRoundedClock01,
+                  color: AppTheme.aiTeal,
+                  size: 18,
+                ),
                 title: Row(
                   children: [
                     Text(
-                      'Agent Timeline',
+                      'Timeline',
                       style: GoogleFonts.poppins(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
@@ -321,7 +341,11 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
                 color: Colors.red.shade50,
                 child: Row(
                   children: [
-                    const Icon(Icons.mic_off, color: Colors.red, size: 16),
+                    const HugeIcon(
+                      icon: HugeIcons.strokeRoundedMicOff01,
+                      color: Colors.red,
+                      size: 16,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -331,7 +355,11 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
                     ),
                     GestureDetector(
                       onTap: () => ref.read(voiceStateProvider.notifier).clearError(),
-                      child: const Icon(Icons.close, size: 16, color: Colors.red),
+                      child: const HugeIcon(
+                        icon: HugeIcons.strokeRoundedCancel01,
+                        size: 16,
+                        color: Colors.red,
+                      ),
                     ),
                   ],
                 ),
@@ -344,10 +372,14 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
               color: AppTheme.aiTeal.withValues(alpha: 0.08),
               child: Row(
                 children: [
-                  const Icon(Icons.volume_up, color: AppTheme.aiTeal, size: 16),
+                  const HugeIcon(
+                    icon: HugeIcons.strokeRoundedVolumeUp,
+                    color: AppTheme.aiTeal,
+                    size: 16,
+                  ),
                   const SizedBox(width: 8),
                   Text(
-                    isPaused ? 'Agent paused' : 'Agent speaking…',
+                    isPaused ? 'Paused' : 'Speaking…',
                     style: GoogleFonts.inter(
                       fontSize: 11,
                       color: AppTheme.aiTeal,
@@ -385,8 +417,11 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
                   // Stop speaking
                   GestureDetector(
                     onTap: () => ref.read(voiceServiceProvider).stopSpeaking(),
-                    child: const Icon(Icons.stop_circle_outlined,
-                        color: AppTheme.aiTeal, size: 20),
+                    child: const HugeIcon(
+                      icon: HugeIcons.strokeRoundedStopCircle,
+                      color: AppTheme.aiTeal,
+                      size: 20,
+                    ),
                   ),
                 ],
               ),
@@ -436,8 +471,8 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
                                 : AppTheme.border,
                           ),
                         ),
-                        child: Icon(
-                          isListening ? Icons.mic : Icons.mic_none,
+                        child: HugeIcon(
+                          icon: isListening ? HugeIcons.strokeRoundedMic01 : HugeIcons.strokeRoundedMicOff01,
                           color: isListening ? Colors.red : AppTheme.textSecondary,
                           size: 20,
                         ),
@@ -453,7 +488,7 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
                       decoration: InputDecoration(
                         hintText: sttAvailable
                             ? 'Type or tap mic to speak…'
-                            : 'Type: "mom ko 2000 bhej do"…',
+                            : 'Type a message…',
                         hintStyle: GoogleFonts.inter(
                             color: AppTheme.textSecondary, fontSize: 13),
                         contentPadding: const EdgeInsets.symmetric(
@@ -478,8 +513,8 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
                         color: AppTheme.primary,
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(
-                        Icons.send,
+                      child: const HugeIcon(
+                        icon: HugeIcons.strokeRoundedSent,
                         color: Colors.white,
                         size: 18,
                       ),
@@ -549,10 +584,14 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
           children: [
             Row(
               children: [
-                const Icon(Icons.security_outlined, color: AppTheme.aiTeal, size: 20),
+                const HugeIcon(
+                  icon: HugeIcons.strokeRoundedSecurityCheck,
+                  color: AppTheme.aiTeal,
+                  size: 20,
+                ),
                 const SizedBox(width: 8),
                 Text(
-                  'Confirm Action Request',
+                  'Confirm Action',
                   style: GoogleFonts.poppins(
                     fontSize: 13,
                     fontWeight: FontWeight.bold,
@@ -563,7 +602,7 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
             ),
             const SizedBox(height: 12),
             Text(
-              'The Agent is requesting permission to perform the following action:',
+              'The Agent requests permission for:',
               style: GoogleFonts.inter(fontSize: 12, color: AppTheme.textSecondary),
             ),
             const SizedBox(height: 8),
@@ -652,12 +691,12 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            isApproved
-                ? Icons.check_circle_outline
+          HugeIcon(
+            icon: isApproved
+                ? HugeIcons.strokeRoundedSecurityCheck
                 : isRejected
-                    ? Icons.cancel_outlined
-                    : Icons.psychology,
+                    ? HugeIcons.strokeRoundedCancelCircle
+                    : HugeIcons.strokeRoundedBrain,
             color: isApproved
                 ? AppTheme.aiTeal
                 : isRejected
@@ -702,6 +741,7 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
     );
   }
 
+  // ignore: unused_element
   Widget _buildToolResult(String text, Map<String, dynamic>? toolCall) {
     final output = toolCall?['output'] ?? {};
     final status = output['status'] ?? 'success';
@@ -717,7 +757,11 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.done_all, color: AppTheme.accentGreen, size: 16),
+          const HugeIcon(
+            icon: HugeIcons.strokeRoundedTickDouble01,
+            color: AppTheme.accentGreen,
+            size: 16,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
@@ -780,7 +824,11 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
       ),
       child: Row(
         children: [
-          Icon(Icons.lightbulb_outline, color: bannerColor, size: 18),
+          HugeIcon(
+            icon: HugeIcons.strokeRoundedIdea,
+            color: bannerColor,
+            size: 18,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Column(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:hugeicons/hugeicons.dart';
 import 'package:sbiv2/core/theme/app_theme.dart';
 import 'package:sbiv2/data/repositories/state_providers.dart';
 import 'package:sbiv2/data/models/models.dart';
@@ -129,7 +130,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       return Scaffold(
         backgroundColor: AppTheme.background,
         appBar: AppBar(
-          title: Text('Onboarding Successful', style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16)),
+          title: Text('Success', style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16)),
           backgroundColor: AppTheme.primary,
           foregroundColor: Colors.white,
           elevation: 0,
@@ -151,8 +152,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                         color: AppTheme.accentGreen.withValues(alpha: 0.15),
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(
-                        Icons.verified_user,
+                      child: const HugeIcon(
+                        icon: HugeIcons.strokeRoundedSecurityCheck,
                         color: AppTheme.accentGreen,
                         size: 48,
                       ),
@@ -168,7 +169,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Congratulations! Your SBI digital account is now open and fully authenticated.',
+                      'Your SBI digital account is set up and active.',
                       textAlign: TextAlign.center,
                       style: GoogleFonts.inter(
                         fontSize: 13,
@@ -187,8 +188,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 14),
                         ),
-                        icon: const Icon(Icons.arrow_forward),
-                        label: const Text('Enter YONO SBI 2.0 Banking'),
+                        icon: const HugeIcon(
+                          icon: HugeIcons.strokeRoundedArrowRight01,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                        label: const Text('Enter Banking'),
                         onPressed: () {
                           ref.read(agentStateProvider.notifier).setMode(AgentMode.banking);
                           ref.read(currentNavIndexProvider.notifier).state = 0; // go to Home
@@ -213,7 +218,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       backgroundColor: AppTheme.background,
       appBar: AppBar(
         title: Text(
-          'SBI Digital Onboarding',
+          'Onboarding',
           style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
         ),
         backgroundColor: AppTheme.primary,
@@ -221,7 +226,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         elevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings, color: Colors.white),
+            icon: const HugeIcon(
+              icon: HugeIcons.strokeRoundedSettings01,
+              color: Colors.white,
+              size: 24,
+            ),
             onPressed: () {
               Navigator.push(
                 context,
@@ -259,62 +268,74 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                       radius: 12,
                       backgroundColor: circleColor,
                       child: isDone
-                          ? const Icon(Icons.check, size: 12, color: Colors.white)
-                          : Text(
-                              '${index + 1}',
-                              style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
-                            ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _getStepLabel(index),
-                      style: GoogleFonts.inter(
-                        fontSize: 9,
-                        fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-                        color: textColor,
+                            ? const HugeIcon(
+                                icon: HugeIcons.strokeRoundedTick01,
+                                size: 12,
+                                color: Colors.white,
+                              )
+                            : Text(
+                                '${index + 1}',
+                                style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
+                              ),
                       ),
-                    ),
-                  ],
-                );
-              }),
-            ),
-          ),
-          
-          // Speaking / thinking alert
-          if (voiceState.status == VoiceStatus.speaking)
-            Container(
-              color: AppTheme.aiTeal.withValues(alpha: 0.1),
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
-              child: Row(
-                children: [
-                  const Icon(Icons.volume_up, size: 16, color: AppTheme.aiTeal),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Agent is speaking...',
-                    style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w600, color: AppTheme.aiTeal),
-                  ),
-                ],
+                      const SizedBox(height: 4),
+                      Text(
+                        _getStepLabel(index),
+                        style: GoogleFonts.inter(
+                          fontSize: 9,
+                          fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                          color: textColor,
+                        ),
+                      ),
+                    ],
+                  );
+                }),
               ),
             ),
-          
-          // Agent dialogue box
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+            
+            // Speaking / thinking alert
+            if (voiceState.status == VoiceStatus.speaking)
+              Container(
+                color: AppTheme.aiTeal.withValues(alpha: 0.1),
+                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+                child: Row(
                   children: [
-                    // Agent Avatar
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: AppTheme.primaryLight,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: AppTheme.primary.withValues(alpha: 0.2), width: 3),
-                      ),
-                      child: const Icon(Icons.support_agent, color: AppTheme.primary, size: 48),
+                    const HugeIcon(
+                      icon: HugeIcons.strokeRoundedVolumeUp,
+                      size: 16,
+                      color: AppTheme.aiTeal,
                     ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Speaking...',
+                      style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w600, color: AppTheme.aiTeal),
+                    ),
+                  ],
+                ),
+              ),
+            
+            // Agent dialogue box
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // Agent Avatar
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryLight,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: AppTheme.primary.withValues(alpha: 0.2), width: 3),
+                        ),
+                        child: const HugeIcon(
+                          icon: HugeIcons.strokeRoundedCustomerService,
+                          color: AppTheme.primary,
+                          size: 48,
+                        ),
+                      ),
                     const SizedBox(height: 24),
                     // Agent speech bubble
                     Container(
@@ -330,7 +351,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                           Row(
                             children: [
                               Text(
-                                'SBI Assistant',
+                                'AI Agent',
                                 style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.primary),
                               ),
                               const SizedBox(width: 8),
@@ -425,8 +446,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
               shape: BoxShape.circle,
               border: Border.all(color: isListening ? Colors.red : AppTheme.border),
             ),
-            child: Icon(
-              isListening ? Icons.mic : Icons.mic_none,
+            child: HugeIcon(
+              icon: isListening ? HugeIcons.strokeRoundedMic01 : HugeIcons.strokeRoundedMicOff01,
               color: isListening ? Colors.red : AppTheme.textSecondary,
               size: 22,
             ),
@@ -462,8 +483,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
               color: AppTheme.primary,
               shape: BoxShape.circle,
             ),
-            child: const Icon(
-              Icons.send,
+            child: const HugeIcon(
+              icon: HugeIcons.strokeRoundedSent,
               color: Colors.white,
               size: 20,
             ),
@@ -487,10 +508,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.video_call, color: AppTheme.primary, size: 24),
+              const HugeIcon(
+                icon: HugeIcons.strokeRoundedVideo01,
+                color: AppTheme.primary,
+                size: 24,
+              ),
               const SizedBox(width: 8),
               Text(
-                'SBI Video Verification Portal',
+                'Video KYC',
                 style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
               ),
             ],
@@ -505,7 +530,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             ),
           ] else ...[
             Text(
-              'Connect with our automated video agent to complete document checks.',
+              'Connect with video agent to verify documents.',
               textAlign: TextAlign.center,
               style: GoogleFonts.inter(fontSize: 11, color: AppTheme.textSecondary, height: 1.4),
             ),
@@ -514,8 +539,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
               width: double.infinity,
               child: ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
-                icon: const Icon(Icons.videocam),
-                label: const Text('Start Video Verification'),
+                icon: const HugeIcon(
+                  icon: HugeIcons.strokeRoundedVideo01,
+                  color: Colors.white,
+                  size: 20,
+                ),
+                label: const Text('Start Video KYC'),
                 onPressed: _runMockVideoKyc,
               ),
             ),
@@ -533,7 +562,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Configure Virtual VPA ID',
+          'Configure UPI VPA',
           style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
         ),
         const SizedBox(height: 10),
@@ -562,7 +591,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
               ),
               onPressed: _runMockUpiSetup,
-              child: const Text('Activate UPI'),
+              child: const Text('Activate'),
             ),
           ],
         ),

@@ -43,6 +43,7 @@ dependencies:
   speech_to_text: ^6.6.2
   flutter_tts: ^4.0.2
   web_socket_channel: ^3.0.1
+  hugeicons: ^1.1.7
 
 
 dev_dependencies:

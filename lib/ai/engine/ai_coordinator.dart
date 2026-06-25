@@ -109,13 +109,18 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
     _ref.listen(profileTypeProvider, (previous, next) {
       _restHistory.clear();
       _toolCallQueue.clear();
-      final memory = _ref.read(agentMemoryProvider);
-      final isOnboarding = !memory.onboardingCompleted && next == 'A';
-      _ref.read(agentStateProvider.notifier).setMode(
-        isOnboarding ? AgentMode.onboarding : AgentMode.banking
-      );
-      _ref.read(agentStateProvider.notifier).reset();
-      _initializeService();
+      
+      // Delay initialization slightly to let all Riverpod resets and synchronous state adjustments finish
+      Future.delayed(Duration.zero, () {
+        if (!mounted) return;
+        final memory = _ref.read(agentMemoryProvider);
+        final isOnboarding = !memory.onboardingCompleted && next == 'A';
+        _ref.read(agentStateProvider.notifier).setMode(
+          isOnboarding ? AgentMode.onboarding : AgentMode.banking
+        );
+        _ref.read(agentStateProvider.notifier).reset();
+        _initializeService();
+      });
     });
 
     _initializeService();
@@ -638,24 +643,46 @@ BEHAVIOR RULES:
         agentInitialText = "Name validation protocol complete.";
         agentFinalText = "Namaste $text! Name saved. Now please enter your 10-digit mobile number.";
       } else if (profile.mobileNumber.isEmpty) {
-        _ref.read(userProfileProvider.notifier).updateMobileNumber(text);
-        agentInitialText = "Registering mobile connection details...";
-        agentFinalText = "Got your mobile number. Now please enter your 10-character PAN card number to initiate identity check.";
+        final cleanMobile = text.replaceAll(RegExp(r'[\s\-+]'), '');
+        final last10 = cleanMobile.length >= 10 ? cleanMobile.substring(cleanMobile.length - 10) : cleanMobile;
+        final mobileRegex = RegExp(r'^[0-9]{10}$');
+        if (!mobileRegex.hasMatch(last10)) {
+          agentInitialText = "Checking mobile number format...";
+          agentFinalText = "Please enter a valid 10-digit mobile number.";
+        } else {
+          _ref.read(userProfileProvider.notifier).updateMobileNumber(last10);
+          agentInitialText = "Registering mobile connection details...";
+          agentFinalText = "Got your mobile number. Now please enter your 10-character PAN card number to initiate identity check.";
+        }
       } else if (profile.kycStep == 'none') {
-        agentInitialText = "Understood. PAN Verification check initialise kar raha hun. API parameters fetch ho rahe hain...";
-        triggerTool = "start_kyc";
-        toolArgs = {'step': 'pan', 'user_confirmed': true};
-        agentFinalText = "PAN verified successfully! ✅ 25 SBI Coins earned. Next step, please enter your 12-digit Aadhaar number for secure verification.";
+        final panRegex = RegExp(r'^[a-zA-Z]{5}[0-9]{4}[a-zA-Z]$');
+        final cleanPan = text.trim();
+        if (!panRegex.hasMatch(cleanPan)) {
+          agentInitialText = "Validating PAN format...";
+          agentFinalText = "Oops! Invalid PAN format. Please enter a valid 10-character PAN card number (e.g., ABCDE1234F).";
+        } else {
+          agentInitialText = "Understood. PAN Verification check initialise kar raha hun. API parameters fetch ho rahe hain...";
+          triggerTool = "start_kyc";
+          toolArgs = {'step': 'pan', 'user_confirmed': true};
+          agentFinalText = "PAN verified successfully! ✅ 25 SBI Coins earned. Next step, please enter your 12-digit Aadhaar number for secure verification.";
+        }
       } else if (profile.kycStep == 'pan') {
-        agentInitialText = "Aadhaar secure verification loop starts... Checking links in background.";
-        triggerTool = "start_kyc";
-        toolArgs = {'step': 'aadhaar', 'user_confirmed': true};
-        agentFinalText = "Aadhaar link verified! ✅ 25 SBI Coins earned. Now, please enter your permanent address.";
+        final cleanAadhaar = text.replaceAll(RegExp(r'[\s\-]'), '');
+        final aadhaarRegex = RegExp(r'^[0-9]{12}$');
+        if (!aadhaarRegex.hasMatch(cleanAadhaar)) {
+          agentInitialText = "Checking Aadhaar format...";
+          agentFinalText = "Aadhaar number must be exactly 12 digits. Please try again.";
+        } else {
+          agentInitialText = "Aadhaar secure verification loop starts... Checking links in background.";
+          triggerTool = "start_kyc";
+          toolArgs = {'step': 'aadhaar', 'user_confirmed': true};
+          agentFinalText = "Aadhaar link verified! ✅ 25 SBI Coins earned. Now, please enter your permanent address.";
+        }
       } else if (profile.kycStep == 'aadhaar' && profile.address.isEmpty) {
         _ref.read(userProfileProvider.notifier).updateAddress(text);
         agentInitialText = "Address validation started...";
         agentFinalText = "Address saved. We are ready for Video KYC. Tap the button below to start camera facial checks.";
-      } else if (profile.kycStep == 'video_kyc') {
+      } else if (profile.kycStep == 'aadhaar' && profile.address.isNotEmpty) {
         agentInitialText = "Opening secure Video KYC session interface... Agent online.";
         triggerTool = "start_kyc";
         toolArgs = {'step': 'video_kyc', 'user_confirmed': true};
@@ -872,6 +899,14 @@ BEHAVIOR RULES:
   void _triggerProactiveWelcome() async {
     final profile = _ref.read(userProfileProvider);
     final memory = _ref.read(agentMemoryProvider);
+    final profileType = _ref.read(profileTypeProvider);
+    final isOnboarding = !memory.onboardingCompleted && profileType == 'A';
+
+    if (isOnboarding) {
+      // Exit early; do not suggest banking alerts/greetings during onboarding
+      return;
+    }
+
     final txs = _ref.read(transactionsProvider);
     final goals = _ref.read(goalsProvider);
     final recs = _ref.read(recommendationsProvider);
