@@ -694,11 +694,11 @@ class AiModelConfig {
 class AiModelConfigNotifier extends StateNotifier<AiModelConfig> {
   AiModelConfigNotifier() : super(const AiModelConfig(
     liveModel: 'models/gemini-3.1-flash-live-preview',
-    restModel: 'gemini-2.0-flash',
+    restModel: 'gemini-2.5-flash',
   )) {
     final box = Hive.box(kSystemBox);
     var savedLive = box.get('ai_live_model', defaultValue: 'models/gemini-3.1-flash-live-preview') as String;
-    final savedRest = box.get('ai_rest_model', defaultValue: 'gemini-2.0-flash') as String;
+    final savedRest = box.get('ai_rest_model', defaultValue: 'gemini-2.5-flash') as String;
 
     // AUTO-MIGRATION: Replace deprecated/shutdown live models with the current default.
     // This prevents users who previously saved an old model from hitting WebSocket 1007 errors.
@@ -728,7 +728,7 @@ class AiModelConfigNotifier extends StateNotifier<AiModelConfig> {
   void reset() {
     state = const AiModelConfig(
       liveModel: 'models/gemini-3.1-flash-live-preview',
-      restModel: 'gemini-2.0-flash',
+      restModel: 'gemini-2.5-flash',
     );
     final box = Hive.box(kSystemBox);
     box.put('ai_live_model', state.liveModel);
