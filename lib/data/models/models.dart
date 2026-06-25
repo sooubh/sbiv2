@@ -258,22 +258,30 @@ class EngagementState {
   final int sbiCoins;
   final int streakCount;
   final List<String> achievements;
+  final int lastQuizTakenTimestamp;
+  final int quizStreak;
 
   EngagementState({
     required this.sbiCoins,
     required this.streakCount,
     required this.achievements,
+    this.lastQuizTakenTimestamp = 0,
+    this.quizStreak = 0,
   });
 
   EngagementState copyWith({
     int? sbiCoins,
     int? streakCount,
     List<String>? achievements,
+    int? lastQuizTakenTimestamp,
+    int? quizStreak,
   }) {
     return EngagementState(
       sbiCoins: sbiCoins ?? this.sbiCoins,
       streakCount: streakCount ?? this.streakCount,
       achievements: achievements ?? this.achievements,
+      lastQuizTakenTimestamp: lastQuizTakenTimestamp ?? this.lastQuizTakenTimestamp,
+      quizStreak: quizStreak ?? this.quizStreak,
     );
   }
 
@@ -282,6 +290,8 @@ class EngagementState {
       'sbiCoins': sbiCoins,
       'streakCount': streakCount,
       'achievements': achievements,
+      'lastQuizTakenTimestamp': lastQuizTakenTimestamp,
+      'quizStreak': quizStreak,
     };
   }
 
@@ -290,6 +300,8 @@ class EngagementState {
       sbiCoins: json['sbiCoins'] ?? 0,
       streakCount: json['streakCount'] ?? 0,
       achievements: List<String>.from(json['achievements'] ?? []),
+      lastQuizTakenTimestamp: json['lastQuizTakenTimestamp'] ?? 0,
+      quizStreak: json['quizStreak'] ?? 0,
     );
   }
 }

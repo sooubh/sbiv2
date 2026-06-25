@@ -14,10 +14,21 @@ class AppTheme {
   static const Color textSecondary = Color(0xFF6B7280);
   static const Color border = Color(0xFFE5E7EB);
 
+  // Extended luxury palette
+  static const Color cardGradientStart = Color(0xFF1E1B7B);
+  static const Color cardGradientEnd = Color(0xFF3D2DB5);
+  static const Color glassWhite = Color(0xFFF8F9FF);
+  static const Color accentGold = Color(0xFFFFB347);
+  static const Color accentRed = Color(0xFFEF4444);
+  static const Color surfaceElevated = Color(0xFFFFFFFF);
+  static const Color shimmerBase = Color(0xFFE8EAF6);
+  static const Color shimmerHighlight = Color(0xFFF5F5FF);
+
   static ThemeData get themeData {
     return ThemeData(
       useMaterial3: true,
-      scaffoldBackgroundColor: background,
+      fontFamily: GoogleFonts.poppins().fontFamily,
+      scaffoldBackgroundColor: glassWhite,
       primaryColor: primary,
       colorScheme: const ColorScheme.light(
         primary: primary,
@@ -80,8 +91,19 @@ class AppTheme {
         color: surface,
         elevation: 0,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(20),
           side: const BorderSide(color: border, width: 1),
+        ),
+      ),
+      appBarTheme: AppBarTheme(
+        backgroundColor: AppTheme.primaryDark,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        centerTitle: false,
+        titleTextStyle: GoogleFonts.poppins(
+          fontSize: 18,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
         ),
       ),
       buttonTheme: const ButtonThemeData(
@@ -128,4 +150,28 @@ class AppTheme {
       color: color ?? textPrimary,
     );
   }
+
+  static BoxDecoration get primaryGradientDecoration => const BoxDecoration(
+    gradient: LinearGradient(
+      colors: [cardGradientStart, cardGradientEnd],
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+    ),
+  );
+
+  static BoxDecoration cardGradientDecoration({double radius = 20}) => BoxDecoration(
+    gradient: const LinearGradient(
+      colors: [cardGradientStart, cardGradientEnd],
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+    ),
+    borderRadius: BorderRadius.circular(radius),
+    boxShadow: [
+      BoxShadow(
+        color: primary.withValues(alpha: 0.3),
+        blurRadius: 20,
+        offset: const Offset(0, 8),
+      ),
+    ],
+  );
 }

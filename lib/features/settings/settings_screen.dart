@@ -3,12 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:sbiv2/core/theme/app_theme.dart';
 import 'package:sbiv2/data/repositories/state_providers.dart';
 import 'package:sbiv2/ai/engine/ai_coordinator.dart';
 import 'package:sbiv2/ai/agent/agent_state.dart';
 import 'package:sbiv2/ai/voice/voice_state.dart';
+import 'package:sbiv2/ai/memory/agent_memory.dart';
 import 'package:sbiv2/features/splash/splash_screen.dart';
 import 'package:sbiv2/features/settings/debug_simulation_page.dart';
 import 'package:sbiv2/features/settings/ai_testing_lab_screen.dart';
@@ -50,6 +52,52 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       context,
       MaterialPageRoute(builder: (context) => const SplashScreen()),
       (route) => false,
+    );
+  }
+
+  void _resetAllData(WidgetRef ref) {
+    // 1. Clear all Hive boxes
+    Hive.box(kProfileBox).clear();
+    Hive.box(kTransactionsBox).clear();
+    Hive.box(kGoalsBox).clear();
+    Hive.box(kRecommendationsBox).clear();
+    Hive.box(kServicesBox).clear();
+    Hive.box(kEngagementBox).clear();
+    Hive.box(kSystemBox).clear();
+    Hive.box(kAgentMemoryBox).clear();
+    Hive.box(kTimelineBox).clear();
+    Hive.box(kFDBox).clear();
+    Hive.box(kSipBox).clear();
+    Hive.box(kLoanBox).clear();
+    Hive.box(kBudgetBox).clear();
+    Hive.box(kOnboardingChatBox).clear();
+    Hive.box(kBankingChatBox).clear();
+
+    // 2. Call reset() on all corresponding provider notifiers
+    ref.read(profileTypeProvider.notifier).reset();
+    ref.read(userProfileProvider.notifier).reset();
+    ref.read(transactionsProvider.notifier).reset();
+    ref.read(goalsProvider.notifier).reset();
+    ref.read(recommendationsProvider.notifier).reset();
+    ref.read(servicesProvider.notifier).reset();
+    ref.read(engagementProvider.notifier).reset();
+    ref.read(timelineProvider.notifier).reset();
+    ref.read(fdListProvider.notifier).reset();
+    ref.read(sipListProvider.notifier).reset();
+    ref.read(loanListProvider.notifier).reset();
+    ref.read(budgetProvider.notifier).reset();
+    ref.read(onboardingChatProvider.notifier).reset();
+    ref.read(bankingChatProvider.notifier).reset();
+    ref.read(aiModelConfigProvider.notifier).reset();
+    ref.read(agentMemoryProvider.notifier).reset();
+    ref.read(isLoggedInProvider.notifier).state = false;
+
+    // Show Snack Bar
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('App data successfully reset to default settings.'),
+        backgroundColor: Colors.red,
+      ),
     );
   }
 
@@ -266,6 +314,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 MaterialPageRoute(builder: (context) => const DebugSimulationPage()),
               );
             },
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            icon: const Icon(Icons.delete_forever),
+            label: Text('Reset App Data', style: GoogleFonts.inter(fontWeight: FontWeight.bold)),
+            onPressed: () => _resetAllData(ref),
           ),
           const SizedBox(height: 16),
           OutlinedButton.icon(

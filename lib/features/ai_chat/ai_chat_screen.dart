@@ -5,15 +5,123 @@ import 'package:hugeicons/hugeicons.dart';
 import 'package:sbiv2/core/theme/app_theme.dart';
 import 'package:sbiv2/data/repositories/state_providers.dart';
 import 'package:sbiv2/ai/engine/ai_coordinator.dart';
-import 'package:sbiv2/ai/engine/pattern_engine.dart';
 import 'package:sbiv2/ai/voice/voice_service.dart';
 import 'package:sbiv2/ai/voice/voice_state.dart';
-import 'package:sbiv2/features/agent/widgets/agent_timeline.dart';
 import 'package:sbiv2/ai/behavior/next_best_action.dart';
 import 'package:sbiv2/ai/behavior/proactive_agent_engine.dart';
 import 'package:sbiv2/ai/memory/agent_memory.dart';
 import 'package:sbiv2/features/agent/models/timeline_entry.dart';
+import 'package:sbiv2/features/agent/widgets/ai_avatar.dart';
 
+// ── Typing Indicator ──────────────────────────────────────────────────────────
+class _TypingIndicator extends StatefulWidget {
+  const _TypingIndicator();
+
+  @override
+  State<_TypingIndicator> createState() => _TypingIndicatorState();
+}
+
+class _TypingIndicatorState extends State<_TypingIndicator>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            // Small AI avatar circle
+            Container(
+              width: 24,
+              height: 24,
+              margin: const EdgeInsets.only(right: 6, bottom: 2),
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [AppTheme.primary, AppTheme.aiTeal],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: const Center(
+                child: Text(
+                  'AI',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 8,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: const BoxDecoration(
+                color: Color(0xFF1E1B7B),
+                borderRadius: BorderRadius.only(
+                  topRight: Radius.circular(16),
+                  bottomLeft: Radius.circular(16),
+                  bottomRight: Radius.circular(16),
+                  topLeft: Radius.circular(4),
+                ),
+              ),
+              child: AnimatedBuilder(
+                animation: _controller,
+                builder: (context, _) {
+                  return Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: List.generate(3, (i) {
+                      // Stagger each dot by 200ms offset
+                      final double start = i * 0.25;
+                      final double end = start + 0.5;
+                      final double opacity = _controller.value >= start &&
+                              _controller.value <= end
+                          ? ((_controller.value - start) / 0.25).clamp(0.0, 1.0)
+                          : _controller.value > end
+                              ? 1.0 - ((_controller.value - end) / 0.25).clamp(0.0, 1.0)
+                              : 0.3;
+                      return Container(
+                        margin: EdgeInsets.only(right: i < 2 ? 4 : 0),
+                        width: 7,
+                        height: 7,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white.withValues(alpha: opacity.clamp(0.3, 1.0)),
+                        ),
+                      );
+                    }),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Main Screen ───────────────────────────────────────────────────────────────
 class AiChatScreen extends ConsumerStatefulWidget {
   const AiChatScreen({super.key});
 
@@ -24,11 +132,15 @@ class AiChatScreen extends ConsumerStatefulWidget {
 class _AiChatScreenState extends ConsumerState<AiChatScreen> {
   final TextEditingController _textController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  bool _hasText = false;
 
   @override
   void initState() {
     super.initState();
-    // Initialise VoiceService after first frame so Riverpod ref is ready.
+    _textController.addListener(() {
+      final has = _textController.text.trim().isNotEmpty;
+      if (has != _hasText) setState(() => _hasText = has);
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(voiceServiceProvider).initialize();
     });
@@ -60,282 +172,244 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
     _scrollToBottom();
   }
 
-  void _showExplainabilitySheet(BuildContext context) {
-    final profile = ref.read(userProfileProvider);
-    final txs = ref.read(transactionsProvider);
-    final signals = PatternEngine.analyze(profile, txs);
-
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) {
-        return Container(
-          padding: const EdgeInsets.all(24),
+  Widget _buildEmptyState(BuildContext context, WidgetRef ref) {
+    return Center(
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
           child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Row(
-                children: [
-                  const HugeIcon(
-                    icon: HugeIcons.strokeRoundedBrain,
-                    color: AppTheme.aiTeal,
-                    size: 28,
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    'AI Decision',
-                    style: GoogleFonts.poppins(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.textPrimary,
-                    ),
-                  ),
-                ],
-              ),
+              const AIAvatar(size: 80),
               const SizedBox(height: 16),
               Text(
-                'Processing:',
-                style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.textPrimary),
+                'How can I help you today?',
+                style: GoogleFonts.poppins(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.textPrimary,
+                ),
               ),
               const SizedBox(height: 8),
               Text(
-                '1. Parses intent (e.g. transfers, goals, investments).\n'
-                '2. Evaluates context (checks savings buffer).\n'
-                '3. Executes tool actions autonomously.',
-                style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 12, height: 1.5),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Pattern Context:',
-                style: GoogleFonts.inter(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.textPrimary),
-              ),
-              const SizedBox(height: 8),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppTheme.background,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  signals.summaryForAgent,
-                  style: AppTheme.monoStyle(fontSize: 10, color: AppTheme.textSecondary),
+                'Ask me to transfer money, open an FD, prepay loans, or check your balance.',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  color: AppTheme.textSecondary,
+                  height: 1.4,
                 ),
               ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('OK'),
-                ),
-              )
             ],
           ),
-        );
-      },
+        ),
+      ),
+    );
+  }
+
+  // ── Premium AppBar ────────────────────────────────────────────────────────
+  Widget _buildPremiumAppBar(String currentLang, bool handsFreeEnabled) {
+    return Container(
+      color: AppTheme.primaryDark,
+      padding: EdgeInsets.only(
+        top: MediaQuery.of(context).padding.top + 6,
+        left: 8,
+        right: 8,
+        bottom: 10,
+      ),
+      child: Row(
+        children: [
+          // Back button
+          IconButton(
+            onPressed: () => Navigator.maybePop(context),
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 18),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+          ),
+          // Small AI Avatar
+          ClipOval(
+            child: SizedBox(
+              width: 32,
+              height: 32,
+              child: const AIAvatar(size: 32),
+            ),
+          ),
+          const SizedBox(width: 10),
+          // Title Column
+          Expanded(
+            child: Text(
+              'YONO AI',
+              style: GoogleFonts.poppins(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+          ),
+          // Language toggle chips (EN / हिं)
+          _buildLangChip('EN', 'en', currentLang),
+          const SizedBox(width: 6),
+          _buildLangChip('हिं', 'hi', currentLang),
+          const SizedBox(width: 2),
+          // Hands-Free toggle icon
+          IconButton(
+            onPressed: () {
+              ref.read(handsFreeVoiceProvider.notifier).update((s) => !s);
+            },
+            icon: Icon(
+              Icons.hearing,
+              color: handsFreeEnabled ? AppTheme.aiTeal : Colors.white,
+              size: 22,
+            ),
+            tooltip: 'Hands-Free Mode',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLangChip(String label, String langCode, String currentLang) {
+    final isActive = currentLang == langCode;
+    return GestureDetector(
+      onTap: () => ref.read(appLanguageProvider.notifier).setLanguage(langCode),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        height: 28,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: isActive ? Colors.white.withValues(alpha: 0.15) : Colors.transparent,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.white, width: 1),
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: GoogleFonts.inter(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: Colors.white,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Shortcut Action Chips Bar ─────────────────────────────────────────────
+  Widget _buildShortcutChipsBar() {
+    final chips = [
+      {'label': 'Prepay Home Loan', 'text': 'Prepay Home Loan'},
+      {'label': 'Check Health Score', 'text': 'Check Health Score'},
+      {'label': 'Resume SIP', 'text': 'Resume SIP'},
+      {'label': 'Check Balance', 'text': 'mera account balance check karo'},
+      {'label': 'Open FD', 'text': 'meri idle savings se Fixed Deposit khol do'},
+    ];
+
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          children: chips.map((chip) {
+            return GestureDetector(
+              onTap: () => _submitMessage(chip['text']!),
+              child: Container(
+                margin: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 14),
+                decoration: BoxDecoration(
+                  color: AppTheme.primary.withValues(alpha: 0.07),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: AppTheme.primary.withValues(alpha: 0.2),
+                  ),
+                ),
+                child: Text(
+                  chip['label']!,
+                  style: GoogleFonts.inter(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.primary,
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final messages = ref.watch(bankingChatProvider);
+    final currentLang = ref.watch(appLanguageProvider);
+    final handsFreeEnabled = ref.watch(handsFreeVoiceProvider);
+    final coordinator = ref.watch(aiCoordinatorProvider);
+    final isThinking = coordinator.isThinking;
 
     // Auto-scroll when messages update
     ref.listen(bankingChatProvider, (prev, next) {
       _scrollToBottom();
     });
+    ref.listen(aiCoordinatorProvider, (prev, next) {
+      if (next.isThinking) _scrollToBottom();
+    });
 
-    final quickChips = [
-      {'label': '💸 Send Money', 'text': 'mom ko 2000 bhej do'},
-      {'label': '🏦 Open FD', 'text': 'meri idle savings se Fixed Deposit khol do'},
-      {'label': '💳 Check Balance', 'text': 'mera account balance check karo'},
-      {'label': '🏥 Coach Mode', 'text': 'mera financial health kaisa hai?'},
-    ];
+    final showHelpers = messages.isEmpty;
 
     return Column(
       children: [
-        // Screen Header with "Why did agent do this?" Floating Info Button
-        Container(
-          width: double.infinity,
-          color: AppTheme.primary,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            children: [
-              CircleAvatar(
-                backgroundColor: AppTheme.aiTeal.withValues(alpha: 0.2),
-                child: const HugeIcon(
-                  icon: HugeIcons.strokeRoundedBubbleChat,
-                  color: AppTheme.aiTeal,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'AI Chat',
-                    style: GoogleFonts.poppins(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                    ),
-                  ),
-                  Text(
-                    'Zero-tap Assistant',
-                    style: GoogleFonts.inter(
-                      color: Colors.white70,
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
-              ),
-              const Spacer(),
-              // Floating Explainability Button
-              IconButton(
-                icon: const HugeIcon(
-                  icon: HugeIcons.strokeRoundedHelpCircle,
-                  color: Colors.white,
-                  size: 24,
-                ),
-                tooltip: 'Why did agent do this?',
-                onPressed: () => _showExplainabilitySheet(context),
-              ),
-            ],
-          ),
-        ),
+        // ── Premium AppBar ──────────────────────────────────────────────────
+        _buildPremiumAppBar(currentLang, handsFreeEnabled),
 
-        // Proactive suggestion banner
-        _buildProactiveBanner(context, ref),
+        if (showHelpers) ...[
+          // ── Shortcut Action Chips Bar ─────────────────────────────────────
+          _buildShortcutChipsBar(),
 
-        // Chat Message History
+          // ── Proactive suggestion banner ───────────────────────────────────
+          _buildProactiveBanner(context, ref),
+        ],
+
+        // ── Chat Message History ────────────────────────────────────────────
         Expanded(
-          child: ListView.builder(
-            controller: _scrollController,
-            physics: const BouncingScrollPhysics(),
-            padding: const EdgeInsets.all(16),
-            itemCount: messages.length,
-            itemBuilder: (context, index) {
-              final msg = messages[index];
-              if (msg.sender == 'system') {
-                if (msg.toolStatus == 'pending') {
-                  return _buildSystemLog(msg);
-                }
-                return const SizedBox.shrink();
-              }
-              if (msg.sender == 'tool') {
-                return const SizedBox.shrink();
-              }
-              final isUser = msg.sender == 'user';
-              return _buildChatBubble(msg.text, isUser);
-            },
-          ),
-        ),
-
-        // Floating Chip Suggestion Row
-        Container(
-          height: 48,
-          color: AppTheme.background,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            physics: const BouncingScrollPhysics(),
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            itemCount: quickChips.length,
-            itemBuilder: (context, index) {
-              final chip = quickChips[index];
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                child: ActionChip(
-                  label: Text(
-                    chip['label']!,
-                    style: GoogleFonts.inter(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: AppTheme.primary,
-                    ),
-                  ),
-                  backgroundColor: Colors.white,
-                  side: const BorderSide(color: AppTheme.border),
-                  onPressed: () {
-                    _submitMessage(chip['text']!);
+          child: showHelpers
+              ? _buildEmptyState(context, ref)
+              : ListView.builder(
+                  controller: _scrollController,
+                  physics: const BouncingScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  // Extra item for typing indicator
+                  itemCount: messages.length + (isThinking ? 1 : 0),
+                  itemBuilder: (context, index) {
+                    // Typing indicator as last item
+                    if (isThinking && index == messages.length) {
+                      return const _TypingIndicator();
+                    }
+                    final msg = messages[index];
+                    if (msg.sender == 'system') {
+                      if (msg.toolStatus == 'pending') {
+                        return _buildSystemLog(msg);
+                      }
+                      return const SizedBox.shrink();
+                    }
+                    if (msg.sender == 'tool') {
+                      return _buildToolResultChip(msg.text);
+                    }
+                    return _buildChatBubble(msg.text, msg.sender);
                   },
                 ),
-              );
-            },
-          ),
         ),
 
-        // ── Collapsible Agent Timeline ───────────────────────────────────────
-        Consumer(
-          builder: (context, ref, _) {
-            final entries = ref.watch(timelineProvider);
-            return Theme(
-              // Remove ExpansionTile's default divider lines
-              data: Theme.of(context).copyWith(
-                dividerColor: Colors.transparent,
-              ),
-              child: ExpansionTile(
-                tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
-                childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                backgroundColor: AppTheme.background,
-                collapsedBackgroundColor: AppTheme.background,
-                leading: const HugeIcon(
-                  icon: HugeIcons.strokeRoundedClock01,
-                  color: AppTheme.aiTeal,
-                  size: 18,
-                ),
-                title: Row(
-                  children: [
-                    Text(
-                      'Timeline',
-                      style: GoogleFonts.poppins(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: AppTheme.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: AppTheme.aiTeal.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        '${entries.length}',
-                        style: GoogleFonts.inter(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: AppTheme.aiTeal,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                children: [
-                  AgentTimeline(entries: entries),
-                ],
-              ),
-            );
-          },
-        ),
-
-        // ── TTS Speaking Banner ──────────────────────────────────────────────
+        // Error display for Voice status
         Consumer(
           builder: (context, ref, _) {
             final voice = ref.watch(voiceStateProvider);
-            final isSpeaking = voice.status == VoiceStatus.speaking;
-            final isPaused = voice.isPaused;
-            final hasError = voice.status == VoiceStatus.error;
-
-            if (!isSpeaking && !hasError) return const SizedBox.shrink();
-
-            if (hasError) {
+            if (voice.status == VoiceStatus.error) {
               return Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 color: Colors.red.shade50,
@@ -365,137 +439,119 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
                 ),
               );
             }
-
-            // Speaking state pill
-            return Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: AppTheme.aiTeal.withValues(alpha: 0.08),
-              child: Row(
-                children: [
-                  const HugeIcon(
-                    icon: HugeIcons.strokeRoundedVolumeUp,
-                    color: AppTheme.aiTeal,
-                    size: 16,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    isPaused ? 'Paused' : 'Speaking…',
-                    style: GoogleFonts.inter(
-                      fontSize: 11,
-                      color: AppTheme.aiTeal,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const Spacer(),
-                  // Pause / Resume toggle
-                  GestureDetector(
-                    onTap: () {
-                      final svc = ref.read(voiceServiceProvider);
-                      if (isPaused) {
-                        svc.resumeSpeaking();
-                      } else {
-                        svc.pauseSpeaking();
-                      }
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: AppTheme.aiTeal.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        isPaused ? 'Resume' : 'Pause',
-                        style: GoogleFonts.inter(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: AppTheme.aiTeal,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  // Stop speaking
-                  GestureDetector(
-                    onTap: () => ref.read(voiceServiceProvider).stopSpeaking(),
-                    child: const HugeIcon(
-                      icon: HugeIcons.strokeRoundedStopCircle,
-                      color: AppTheme.aiTeal,
-                      size: 20,
-                    ),
-                  ),
-                ],
-              ),
-            );
+            return const SizedBox.shrink();
           },
         ),
 
-        // ── Input Bar ────────────────────────────────────────────────────────
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            border: Border(top: BorderSide(color: AppTheme.border)),
+        if (handsFreeEnabled)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              "• Hands-free mode: speak when the agent stops",
+              style: GoogleFonts.inter(
+                fontSize: 10,
+                color: AppTheme.aiTeal,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           ),
-          child: Consumer(
-            builder: (context, ref, _) {
-              final voice = ref.watch(voiceStateProvider);
-              final isListening = voice.status == VoiceStatus.listening;
-              final isSpeaking = voice.status == VoiceStatus.speaking;
-              final sttAvailable = voice.sttAvailable;
 
-              return Row(
+        // ── Premium Input Bar ─────────────────────────────────────────────────
+        Consumer(
+          builder: (context, ref, _) {
+            final voice = ref.watch(voiceStateProvider);
+            final isListening = voice.status == VoiceStatus.listening;
+            final isSpeaking = voice.status == VoiceStatus.speaking;
+            final sttAvailable = voice.sttAvailable;
+
+            return Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                border: Border(top: BorderSide(color: AppTheme.border)),
+              ),
+              padding: EdgeInsets.fromLTRB(
+                12,
+                8,
+                12,
+                16 + MediaQuery.of(context).padding.bottom,
+              ),
+              child: Row(
                 children: [
-                  // ── Mic button ──────────────────────────────────────────
+                  // Mic / Speak / Stop button
                   if (sttAvailable)
                     GestureDetector(
                       onTap: () {
                         final svc = ref.read(voiceServiceProvider);
                         if (isListening) {
                           svc.cancelListening();
-                        } else if (!isSpeaking) {
+                        } else if (isSpeaking) {
+                          svc.stopSpeaking();
+                        } else {
                           svc.startListening();
                         }
                       },
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 200),
-                        padding: const EdgeInsets.all(10),
+                        width: 40,
+                        height: 40,
                         margin: const EdgeInsets.only(right: 8),
                         decoration: BoxDecoration(
                           color: isListening
                               ? Colors.red.shade50
-                              : AppTheme.background,
+                              : isSpeaking
+                                  ? AppTheme.accentOrange.withValues(alpha: 0.1)
+                                  : Colors.transparent,
                           shape: BoxShape.circle,
-                          border: Border.all(
-                            color: isListening
-                                ? Colors.red
-                                : AppTheme.border,
-                          ),
                         ),
-                        child: HugeIcon(
-                          icon: isListening ? HugeIcons.strokeRoundedMic01 : HugeIcons.strokeRoundedMicOff01,
-                          color: isListening ? Colors.red : AppTheme.textSecondary,
-                          size: 20,
+                        child: Icon(
+                          isListening
+                              ? Icons.stop
+                              : isSpeaking
+                                  ? Icons.volume_up
+                                  : Icons.mic,
+                          color: isListening
+                              ? Colors.red
+                              : isSpeaking
+                                  ? AppTheme.accentOrange
+                                  : AppTheme.aiTeal,
+                          size: 24,
                         ),
                       ),
-                    ),
+                    )
+                  else
+                    const SizedBox(width: 4),
 
-                  // ── Text Field ──────────────────────────────────────────
+                  // Text field
                   Expanded(
                     child: TextField(
                       controller: _textController,
                       textInputAction: TextInputAction.send,
                       onSubmitted: (val) => _submitMessage(val.trim()),
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        color: AppTheme.textPrimary,
+                      ),
                       decoration: InputDecoration(
-                        hintText: sttAvailable
-                            ? 'Type or tap mic to speak…'
-                            : 'Type a message…',
+                        hintText: 'Ask YONO AI anything...',
                         hintStyle: GoogleFonts.inter(
-                            color: AppTheme.textSecondary, fontSize: 13),
+                          color: AppTheme.textSecondary,
+                          fontSize: 13,
+                        ),
                         contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 10),
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
                         filled: true,
                         fillColor: AppTheme.background,
                         border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(24),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(24),
+                          borderSide: BorderSide.none,
+                        ),
+                        focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(24),
                           borderSide: BorderSide.none,
                         ),
@@ -504,59 +560,181 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
                   ),
                   const SizedBox(width: 8),
 
-                  // ── Send button ─────────────────────────────────────────
+                  // Send button — gradient when active, grayed when empty
                   GestureDetector(
-                    onTap: () => _submitMessage(_textController.text.trim()),
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: const BoxDecoration(
-                        color: AppTheme.primary,
+                    onTap: _hasText
+                        ? () => _submitMessage(_textController.text.trim())
+                        : null,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
                         shape: BoxShape.circle,
+                        gradient: _hasText
+                            ? const LinearGradient(
+                                colors: [AppTheme.primary, AppTheme.aiTeal],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              )
+                            : LinearGradient(
+                                colors: [
+                                  AppTheme.border,
+                                  AppTheme.border,
+                                ],
+                              ),
                       ),
-                      child: const HugeIcon(
-                        icon: HugeIcons.strokeRoundedSent,
+                      child: const Icon(
+                        Icons.send_rounded,
                         color: Colors.white,
-                        size: 18,
+                        size: 20,
                       ),
                     ),
                   ),
                 ],
-              );
-            },
-          ),
+              ),
+            );
+          },
         ),
       ],
     );
   }
 
-  Widget _buildChatBubble(String text, bool isUser) {
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-        decoration: BoxDecoration(
-          color: isUser ? AppTheme.primary : AppTheme.primaryLight,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: Radius.circular(isUser ? 16 : 0),
-            bottomRight: Radius.circular(isUser ? 0 : 16),
+  // ── Premium Message Bubble ────────────────────────────────────────────────
+  Widget _buildChatBubble(String text, String sender) {
+    final isUser = sender == 'user';
+    // Rough timestamp display
+    final now = TimeOfDay.now();
+    final timeStr =
+        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+
+    if (isUser) {
+      return Align(
+        alignment: Alignment.centerRight,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.72),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: AppTheme.border),
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(16),
+                    topRight: Radius.circular(16),
+                    bottomLeft: Radius.circular(16),
+                    bottomRight: Radius.circular(4),
+                  ),
+                ),
+                child: Text(
+                  text,
+                  style: GoogleFonts.inter(
+                    color: AppTheme.textPrimary,
+                    fontSize: 14,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                timeStr,
+                style: GoogleFonts.inter(
+                  fontSize: 9,
+                  color: AppTheme.textSecondary,
+                ),
+              ),
+            ],
           ),
         ),
-        child: Text(
-          text,
-          style: GoogleFonts.inter(
-            color: isUser ? Colors.white : AppTheme.textPrimary,
-            fontSize: 14,
-            height: 1.4,
-          ),
+      );
+    }
+
+    // Agent bubble
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            // Small gradient AI avatar
+            Container(
+              width: 24,
+              height: 24,
+              margin: const EdgeInsets.only(right: 6, bottom: 2),
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [AppTheme.primary, AppTheme.aiTeal],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: const Center(
+                child: Text(
+                  'AI',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 8,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+            // Bubble
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width * 0.72),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: const BoxDecoration(
+                  color: Color(0xFF1E1B7B),
+                  borderRadius: BorderRadius.only(
+                    topRight: Radius.circular(16),
+                    bottomLeft: Radius.circular(16),
+                    bottomRight: Radius.circular(16),
+                    topLeft: Radius.circular(4),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '🤖 YONO AI',
+                      style: GoogleFonts.inter(
+                        fontSize: 10,
+                        color: AppTheme.aiTeal,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      text,
+                      style: GoogleFonts.inter(
+                        color: Colors.white,
+                        fontSize: 14,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
+  // ── Tool Approval Card ────────────────────────────────────────────────────
   Widget _buildSystemLog(ChatMessage msg) {
     final toolCall = msg.toolCall;
     final toolName = toolCall?['name'] ?? '';
@@ -565,8 +743,7 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
 
     if (status == 'pending') {
       return Container(
-        margin: const EdgeInsets.only(bottom: 12, top: 4),
-        padding: const EdgeInsets.all(16),
+        margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
@@ -579,89 +756,104 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
             ),
           ],
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const HugeIcon(
-                  icon: HugeIcons.strokeRoundedSecurityCheck,
-                  color: AppTheme.aiTeal,
-                  size: 20,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'Confirm Action',
-                  style: GoogleFonts.poppins(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.textPrimary,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Subtle gradient top-edge accent strip
+              Container(
+                height: 4,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      AppTheme.primary.withValues(alpha: 0.05),
+                      Colors.transparent,
+                    ],
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'The Agent requests permission for:',
-              style: GoogleFonts.inter(fontSize: 12, color: AppTheme.textSecondary),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppTheme.background,
-                borderRadius: BorderRadius.circular(12),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Action: $toolName',
-                    style: GoogleFonts.poppins(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: AppTheme.primary,
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.security, color: AppTheme.aiTeal, size: 18),
+                        const SizedBox(width: 6),
+                        Text(
+                          "Action Confirmation Required",
+                          style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.textPrimary,
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  ...args.entries.map((e) => Text(
-                        '${e.key}: ${e.value}',
+                    const SizedBox(height: 12),
+                    Text(
+                      "The agent wants to execute a transaction on your behalf:",
+                      style: GoogleFonts.inter(fontSize: 12, color: AppTheme.textSecondary),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppTheme.background,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        msg.text,
                         style: AppTheme.monoStyle(fontSize: 11, color: AppTheme.textPrimary),
-                      )),
-                ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        OutlinedButton(
+                          onPressed: () => ref
+                              .read(aiCoordinatorProvider.notifier)
+                              .confirmToolCall(msg.toolCallId!, false),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.red,
+                            side: BorderSide(color: Colors.red.withValues(alpha: 0.5)),
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8)),
+                          ),
+                          child: Text("Deny",
+                              style: GoogleFonts.inter(
+                                  fontSize: 11, fontWeight: FontWeight.bold)),
+                        ),
+                        const SizedBox(width: 10),
+                        ElevatedButton(
+                          onPressed: () => ref
+                              .read(aiCoordinatorProvider.notifier)
+                              .confirmToolCall(msg.toolCallId!, true),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppTheme.aiTeal,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8)),
+                          ),
+                          child: Text("Approve",
+                              style: GoogleFonts.inter(
+                                  fontSize: 11, fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                OutlinedButton(
-                  onPressed: () {
-                    ref.read(aiCoordinatorProvider.notifier).confirmToolCall(msg.toolCallId!, false);
-                  },
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.red,
-                    side: const BorderSide(color: Colors.red),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  ),
-                  child: const Text('Cancel'),
-                ),
-                const SizedBox(width: 12),
-                ElevatedButton(
-                  onPressed: () {
-                    ref.read(aiCoordinatorProvider.notifier).confirmToolCall(msg.toolCallId!, true);
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.aiTeal,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  ),
-                  child: const Text('Approve'),
-                ),
-              ],
-            )
-          ],
+            ],
+          ),
         ),
       );
     }
@@ -741,52 +933,48 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
     );
   }
 
-  // ignore: unused_element
-  Widget _buildToolResult(String text, Map<String, dynamic>? toolCall) {
-    final output = toolCall?['output'] ?? {};
-    final status = output['status'] ?? 'success';
+  Widget _buildToolResultChip(String text) {
+    final isSuccess = text.contains('✅');
+    final isError = text.contains('❌');
+    final displayText =
+        text.replaceAll('✅', '').replaceAll('❌', '').trim();
+    final color = isSuccess
+        ? AppTheme.accentGreen
+        : (isError ? Colors.red : AppTheme.textSecondary);
+    final icon = isSuccess
+        ? Icons.check_circle_outline
+        : (isError ? Icons.error_outline : Icons.info_outline);
+    final bgColor = isSuccess
+        ? AppTheme.accentGreen.withValues(alpha: 0.1)
+        : (isError
+            ? Colors.red.withValues(alpha: 0.1)
+            : AppTheme.background);
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: AppTheme.accentGreen.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.accentGreen.withValues(alpha: 0.25), width: 1),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const HugeIcon(
-            icon: HugeIcons.strokeRoundedTickDouble01,
-            color: AppTheme.accentGreen,
-            size: 16,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Tool Output: $status',
-                  style: GoogleFonts.poppins(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.accentGreen,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  output.toString(),
-                  style: AppTheme.monoStyle(
-                    fontSize: 10,
-                    color: AppTheme.textSecondary,
-                  ),
-                ),
-              ],
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color, size: 14),
+            const SizedBox(width: 6),
+            Text(
+              displayText,
+              style: GoogleFonts.inter(
+                color: color,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -811,7 +999,8 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
     }
 
     Color bannerColor = AppTheme.aiTeal;
-    if (action.type == NextBestActionType.kyc || action.type == NextBestActionType.lowBalance) {
+    if (action.type == NextBestActionType.kyc ||
+        action.type == NextBestActionType.lowBalance) {
       bannerColor = AppTheme.accentOrange;
     }
 
@@ -820,7 +1009,9 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
         color: bannerColor.withValues(alpha: 0.1),
-        border: Border(bottom: BorderSide(color: bannerColor.withValues(alpha: 0.3), width: 1)),
+        border: Border(
+            bottom: BorderSide(
+                color: bannerColor.withValues(alpha: 0.3), width: 1)),
       ),
       child: Row(
         children: [
@@ -836,11 +1027,15 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
               children: [
                 Text(
                   "Suggestion: ${action.title}",
-                  style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                  style: GoogleFonts.poppins(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: AppTheme.textPrimary),
                 ),
                 Text(
                   "Why: ${action.aiReason}",
-                  style: GoogleFonts.inter(fontSize: 10, color: AppTheme.textSecondary),
+                  style: GoogleFonts.inter(
+                      fontSize: 10, color: AppTheme.textSecondary),
                 ),
               ],
             ),
@@ -848,25 +1043,31 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
           const SizedBox(width: 8),
           TextButton(
             style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               minimumSize: Size.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               backgroundColor: bannerColor,
               foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
             ),
             onPressed: () {
               ref.read(timelineProvider.notifier).log(
-                type: TimelineEntryType.toolCompleted,
-                title: 'Accepted via Chat: ${action.title}',
-                description: 'User initiated solution directly from the chat banner.',
-                status: TimelineEntryStatus.success,
-              );
+                    type: TimelineEntryType.toolCompleted,
+                    title: 'Accepted via Chat: ${action.title}',
+                    description:
+                        'User initiated solution directly from the chat banner.',
+                    status: TimelineEntryStatus.success,
+                  );
 
-              ref.read(agentMemoryProvider.notifier).updateCooldown(action.type.name, DateTime.now().millisecondsSinceEpoch);
+              ref
+                  .read(agentMemoryProvider.notifier)
+                  .updateCooldown(action.type.name,
+                      DateTime.now().millisecondsSinceEpoch);
 
               if (action.type == NextBestActionType.kyc) {
-                ref.read(currentNavIndexProvider.notifier).state = 1; // Go to KYC
+                ref.read(currentNavIndexProvider.notifier).state = 1;
               } else if (action.type == NextBestActionType.healthSummary) {
                 ref.read(currentNavIndexProvider.notifier).state = 3;
               } else {
@@ -896,7 +1097,10 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
             },
             child: Text(
               "Start",
-              style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
+              style: GoogleFonts.inter(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white),
             ),
           ),
         ],

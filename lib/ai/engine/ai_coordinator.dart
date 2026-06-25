@@ -15,6 +15,8 @@ import 'package:sbiv2/features/agent/models/timeline_entry.dart';
 import 'package:sbiv2/ai/behavior/next_best_action.dart';
 import 'package:sbiv2/ai/behavior/proactive_agent_engine.dart';
 import 'package:sbiv2/ai/behavior/retention_rules.dart';
+import 'package:sbiv2/ai/agent/agent_orchestrator.dart';
+import 'package:sbiv2/features/agent/agent_status_bar.dart';
 
 // API Key provider (can be updated in UI)
 final geminiApiKeyProvider = StateProvider<String>((ref) {
@@ -253,6 +255,10 @@ class AICoordinator extends StateNotifier<AICoordinatorState> {
     }
 
     final isOnboarding = !memory.onboardingCompleted && memory.activeProfileType == 'A';
+    final lang = _ref.read(appLanguageProvider);
+    final languageInstruction = lang == 'hi'
+        ? "\nCRITICAL: Output all responses strictly in Devanagari Hindi.\n"
+        : "";
 
     if (isOnboarding) {
       return """
@@ -271,8 +277,7 @@ BEHAVIOR RULES:
 - Ask short, guided questions. Do not ask for multiple things at once.
 - Advance exactly one step at a time.
 - If onboarding is complete, congratulate the user and instruct them to proceed to banking.
-- Speak in a friendly Hinglish/English blend.
-""";
+- Speak in a friendly Hinglish/English blend.$languageInstruction""";
     } else {
       String signalContext = signals.summaryForAgent;
       if (memory.lastDetectedSignal != null) {
@@ -306,8 +311,7 @@ YOUR TOOLS:
 BEHAVIOR RULES:
 - Proactively suggest the next best action based on the active financial signals.
 - Use the memory context to tailor your responses.
-- Explain briefly what you are doing before executing a tool call.
-""";
+- Explain briefly what you are doing before executing a tool call.$languageInstruction""";
     }
   }
 
@@ -473,6 +477,52 @@ BEHAVIOR RULES:
     state = state.copyWith(isThinking: true);
     agentState.setStatus(AgentStatus.thinking);
 
+    // If onboarding is active, always use high-fidelity simulation to guarantee correctness
+    final memory = _ref.read(agentMemoryProvider);
+    final profileType = _ref.read(profileTypeProvider);
+    final isOnboarding = !memory.onboardingCompleted && profileType == 'A';
+
+    if (isOnboarding) {
+      await _sendSimulatedMessage(text);
+      return;
+    }
+
+    // ── Enterprise Agent Orchestration ─────────────────────────────────────
+    // Route the message through the domain-specific agent orchestrator so the
+    // UI can show which agent (Advisor / Transaction / Compliance) is active.
+    try {
+      final profile = _ref.read(userProfileProvider);
+      final transactions = _ref.read(transactionsProvider);
+      final goals = _ref.read(goalsProvider);
+      final recommendations = _ref.read(recommendationsProvider);
+      final decision = AgentOrchestrator.route(
+        message: text,
+        profile: profile,
+        transactions: transactions,
+        goals: goals,
+        memory: memory,
+        recommendations: recommendations,
+      );
+      // Expose the active agent to the UI via provider
+      _ref.read(activeAgentProvider.notifier).state = decision;
+      // Auto-clear after 5 seconds so the status bar doesn't persist forever
+      Future.delayed(const Duration(seconds: 5), () {
+        if (mounted) _ref.read(activeAgentProvider.notifier).state = null;
+      });
+      // If compliance blocks the transaction, short-circuit with a chat message
+      if (decision.complianceResult != null &&
+          decision.complianceResult!.shouldBlock) {
+        _addMessageToUI('agent', decision.complianceResult!.message);
+        _ref.read(voiceServiceProvider).speak(decision.complianceResult!.message);
+        state = state.copyWith(isThinking: false);
+        agentState.setStatus(AgentStatus.idle);
+        return;
+      }
+    } catch (_) {
+      // Orchestration is best-effort — never block the main flow
+    }
+    // ── End Orchestration ──────────────────────────────────────────────────
+
     if (state.mode == AIServiceMode.live) {
       _liveService.sendMessage(text);
       return;
@@ -530,10 +580,10 @@ BEHAVIOR RULES:
             
             Map<String, dynamic> output;
 
-            if (name == 'update_profile_info') {
-              // Auto-approve profile updates for a smooth conversational flow
+            if (name == 'update_profile_info' || name == 'start_kyc' || name == 'activate_upi') {
+              // Auto-approve onboarding tools for a smooth conversational flow
               output = await _executeTool(name, args);
-              _addMessageToUI('tool', "Agent updated profile info ✅", toolCall: {'output': output});
+              _addMessageToUI('tool', "Agent executed $name ✅", toolCall: {'output': output});
             } else {
               final toolCallId = 'rest_call_${DateTime.now().millisecondsSinceEpoch}';
               final completer = Completer<bool>();
@@ -635,63 +685,86 @@ BEHAVIOR RULES:
     final profileType = _ref.read(profileTypeProvider);
     final memory = _ref.read(agentMemoryProvider);
     final isOnboarding = !memory.onboardingCompleted && profileType == 'A';
+    final lang = _ref.read(appLanguageProvider);
+    final isHi = lang == 'hi';
 
     if (isOnboarding) {
       // Rohan Onboarding Chat Simulation
       if (profile.name.isEmpty) {
         _ref.read(userProfileProvider.notifier).updateName(text);
-        agentInitialText = "Name validation protocol complete.";
-        agentFinalText = "Namaste $text! Name saved. Now please enter your 10-digit mobile number.";
+        agentInitialText = isHi ? "नाम सत्यापन प्रोटोकॉल पूरा हुआ।" : "Name validation protocol complete.";
+        agentFinalText = isHi 
+            ? "नमस्ते $text! नाम सहेज लिया गया है। अब कृपया अपना 10 अंकों का मोबाइल नंबर दर्ज करें।" 
+            : "Namaste $text! Name saved. Now please enter your 10-digit mobile number.";
       } else if (profile.mobileNumber.isEmpty) {
         final cleanMobile = text.replaceAll(RegExp(r'[\s\-+]'), '');
-        final last10 = cleanMobile.length >= 10 ? cleanMobile.substring(cleanMobile.length - 10) : cleanMobile;
-        final mobileRegex = RegExp(r'^[0-9]{10}$');
-        if (!mobileRegex.hasMatch(last10)) {
-          agentInitialText = "Checking mobile number format...";
-          agentFinalText = "Please enter a valid 10-digit mobile number.";
+        final mobileRegex = RegExp(r'[0-9]{10}');
+        final match = mobileRegex.firstMatch(cleanMobile);
+        if (match == null) {
+          agentInitialText = isHi ? "मोबाइल नंबर प्रारूप की जाँच की जा रही है..." : "Checking mobile number format...";
+          agentFinalText = isHi ? "कृपया एक मान्य 10-अंकीय मोबाइल नंबर दर्ज करें।" : "Please enter a valid 10-digit mobile number.";
         } else {
+          final last10 = match.group(0)!;
           _ref.read(userProfileProvider.notifier).updateMobileNumber(last10);
-          agentInitialText = "Registering mobile connection details...";
-          agentFinalText = "Got your mobile number. Now please enter your 10-character PAN card number to initiate identity check.";
+          agentInitialText = isHi ? "मोबाइल कनेक्शन विवरण दर्ज किया जा रहा है..." : "Registering mobile connection details...";
+          agentFinalText = isHi 
+              ? "आपका मोबाइल नंबर मिल गया है। अब पहचान जांच शुरू करने के लिए अपना 10-अक्षर का पैन कार्ड नंबर दर्ज करें।" 
+              : "Got your mobile number. Now please enter your 10-character PAN card number to initiate identity check.";
         }
       } else if (profile.kycStep == 'none') {
-        final panRegex = RegExp(r'^[a-zA-Z]{5}[0-9]{4}[a-zA-Z]$');
-        final cleanPan = text.trim();
-        if (!panRegex.hasMatch(cleanPan)) {
-          agentInitialText = "Validating PAN format...";
-          agentFinalText = "Oops! Invalid PAN format. Please enter a valid 10-character PAN card number (e.g., ABCDE1234F).";
+        final normalizedText = text.toUpperCase().replaceAll(RegExp(r'[\s\-]'), '');
+        final panRegex = RegExp(r'[A-Z]{5}[0-9]{4}[A-Z]');
+        final match = panRegex.firstMatch(normalizedText);
+        if (match == null) {
+          agentInitialText = isHi ? "पैन प्रारूप का सत्यापन किया जा रहा है..." : "Validating PAN format...";
+          agentFinalText = isHi 
+              ? "ओह! अमान्य पैन प्रारूप। कृपया एक मान्य 10-अक्षर का पैन कार्ड नंबर दर्ज करें (जैसे, ABCDE1234F)।" 
+              : "Oops! Invalid PAN format. Please enter a valid 10-character PAN card number (e.g., ABCDE1234F).";
         } else {
-          agentInitialText = "Understood. PAN Verification check initialise kar raha hun. API parameters fetch ho rahe hain...";
+          agentInitialText = isHi 
+              ? "समझ गया। पैन सत्यापन जांच शुरू की जा रही है। एपीआई पैरामीटर प्राप्त किए जा रहे हैं..." 
+              : "Understood. PAN Verification check initialise kar raha hun. API parameters fetch ho rahe hain...";
           triggerTool = "start_kyc";
           toolArgs = {'step': 'pan', 'user_confirmed': true};
-          agentFinalText = "PAN verified successfully! ✅ 25 SBI Coins earned. Next step, please enter your 12-digit Aadhaar number for secure verification.";
+          agentFinalText = isHi 
+              ? "पैन सफलतापूर्वक सत्यापित हो गया है! ✅ 25 एसबीआई कॉइन्स अर्जित किए। अगले चरण में, सुरक्षित सत्यापन के लिए कृपया अपना 12-अंकीय आधार नंबर दर्ज करें।" 
+              : "PAN verified successfully! ✅ 25 SBI Coins earned. Next step, please enter your 12-digit Aadhaar number for secure verification.";
         }
       } else if (profile.kycStep == 'pan') {
         final cleanAadhaar = text.replaceAll(RegExp(r'[\s\-]'), '');
-        final aadhaarRegex = RegExp(r'^[0-9]{12}$');
-        if (!aadhaarRegex.hasMatch(cleanAadhaar)) {
-          agentInitialText = "Checking Aadhaar format...";
-          agentFinalText = "Aadhaar number must be exactly 12 digits. Please try again.";
+        final aadhaarRegex = RegExp(r'[0-9]{12}');
+        final match = aadhaarRegex.firstMatch(cleanAadhaar);
+        if (match == null) {
+          agentInitialText = isHi ? "आधार प्रारूप की जांच की जा रही है..." : "Checking Aadhaar format...";
+          agentFinalText = isHi ? "आधार संख्या ठीक 12 अंकों की होनी चाहिए। कृपया पुनः प्रयास करें।" : "Aadhaar number must be exactly 12 digits. Please try again.";
         } else {
-          agentInitialText = "Aadhaar secure verification loop starts... Checking links in background.";
+          agentInitialText = isHi ? "आधार सुरक्षित सत्यापन लूप शुरू... पृष्ठभूमि में लिंक की जांच की जा रही है।" : "Aadhaar secure verification loop starts... Checking links in background.";
           triggerTool = "start_kyc";
           toolArgs = {'step': 'aadhaar', 'user_confirmed': true};
-          agentFinalText = "Aadhaar link verified! ✅ 25 SBI Coins earned. Now, please enter your permanent address.";
+          agentFinalText = isHi 
+              ? "आधार लिंक सत्यापित हो गया है! ✅ 25 एसबीआई कॉइन्स अर्जित किए। अब, कृपया अपना स्थायी पता दर्ज करें।" 
+              : "Aadhaar link verified! ✅ 25 SBI Coins earned. Now, please enter your permanent address.";
         }
       } else if (profile.kycStep == 'aadhaar' && profile.address.isEmpty) {
         _ref.read(userProfileProvider.notifier).updateAddress(text);
-        agentInitialText = "Address validation started...";
-        agentFinalText = "Address saved. We are ready for Video KYC. Tap the button below to start camera facial checks.";
+        agentInitialText = isHi ? "पता सत्यापन शुरू हुआ..." : "Address validation started...";
+        agentFinalText = isHi 
+            ? "पता सहेज लिया गया है। हम वीडियो केवाईसी के लिए तैयार हैं। कैमरा चेहरे की जांच शुरू करने के लिए नीचे दिए गए बटन पर टैप करें।" 
+            : "Address saved. We are ready for Video KYC. Tap the button below to start camera facial checks.";
       } else if (profile.kycStep == 'aadhaar' && profile.address.isNotEmpty) {
-        agentInitialText = "Opening secure Video KYC session interface... Agent online.";
+        agentInitialText = isHi ? "सुरक्षित वीडियो केवाईसी सत्र इंटरफ़ेस खोला जा रहा है... एजेंट ऑनलाइन है।" : "Opening secure Video KYC session interface... Agent online.";
         triggerTool = "start_kyc";
         toolArgs = {'step': 'video_kyc', 'user_confirmed': true};
-        agentFinalText = "Video KYC verification completed! 🎉 50 SBI Coins awarded. Finally, let's setup your UPI VPA to enable digital payments. Enter your preferred VPA (e.g. name@sbi).";
+        agentFinalText = isHi 
+            ? "वीडियो केवाईसी सत्यापन पूरा हुआ! 🎉 50 एसबीआई कॉइन्स मिले। अंत में, डिजिटल भुगतान सक्षम करने के लिए अपना यूपीआई वीपीए सेट करें। अपना पसंदीदा वीपीए दर्ज करें (जैसे name@sbi)।" 
+            : "Video KYC verification completed! 🎉 50 SBI Coins awarded. Finally, let's setup your UPI VPA to enable digital payments. Enter your preferred VPA (e.g. name@sbi).";
       } else {
-        agentInitialText = "Activating UPI quick pay protocol... Allocating primary VPA $text.";
+        agentInitialText = isHi ? "यूपीआई त्वरित भुगतान प्रोटोकॉल सक्रिय किया जा रहा है... प्राथमिक वीपीए $text आवंटित किया जा रहा है।" : "Activating UPI quick pay protocol... Allocating primary VPA $text.";
         triggerTool = "activate_upi";
         toolArgs = {'vpa': text};
-        agentFinalText = "UPI set up complete! ✅ VPA: $text is active. 30 SBI Coins earned. Welcome to YONO SBI 2.0. You are ready to enter Banking Mode!";
+        agentFinalText = isHi 
+            ? "यूपीआई सेटअप पूरा हुआ! ✅ वीपीए: $text सक्रिय है। 30 एसबीआई कॉइन्स अर्जित किए। योनो एसबीआई 2.0 में आपका स्वागत है। आप बैंकिंग मोड में प्रवेश करने के लिए तैयार हैं!" 
+            : "UPI set up complete! ✅ VPA: $text is active. 30 SBI Coins earned. Welcome to YONO SBI 2.0. You are ready to enter Banking Mode!";
       }
     } else {
       // Regex Matchers for Banking Simulation
@@ -711,75 +784,115 @@ BEHAVIOR RULES:
       if (matchCreateSip != null) {
         final amount = double.parse(matchCreateSip.group(1)!);
         final fundName = matchCreateSip.group(2)?.trim() ?? 'SBI Bluechip Fund';
-        agentInitialText = "SBI SIP setup utility active. Main $fundName mein ₹${amount.toStringAsFixed(0)} ki monthly SIP configure kar raha hun.";
+        agentInitialText = isHi 
+            ? "एसबीआई एसआईपी सेटअप उपयोगिता सक्रिय है। मैं $fundName में ₹${amount.toStringAsFixed(0)} की मासिक एसआईपी कॉन्फ़िगर कर रहा हूँ।" 
+            : "SBI SIP setup utility active. Main $fundName mein ₹${amount.toStringAsFixed(0)} ki monthly SIP configure kar raha hun.";
         triggerTool = "manage_sip";
         toolArgs = {'action': 'create', 'fund_name': fundName, 'amount': amount};
-        agentFinalText = "$fundName mein ₹${amount.toStringAsFixed(0)} ki monthly SIP register ho chuki hai! 🎉 Streak status: Active.";
+        agentFinalText = isHi 
+            ? "$fundName में ₹${amount.toStringAsFixed(0)} की मासिक एसआईपी पंजीकृत हो गई है! 🎉 स्ट्रीक स्थिति: सक्रिय।" 
+            : "$fundName mein ₹${amount.toStringAsFixed(0)} ki monthly SIP register ho chuki hai! 🎉 Streak status: Active.";
       } else if (matchUpdateSip != null) {
         final amount = double.parse(matchUpdateSip.group(1)!);
         final fundName = matchUpdateSip.group(2)?.trim() ?? 'SBI Bluechip Fund';
-        agentInitialText = "SIP amount modify request. $fundName ki monthly limit update karke ₹${amount.toStringAsFixed(0)} karne ka setup chal raha hai.";
+        agentInitialText = isHi 
+            ? "एसआईपी राशि में संशोधन का अनुरोध। $fundName की मासिक सीमा को अपडेट करके ₹${amount.toStringAsFixed(0)} करने का सेटअप चल रहा है।" 
+            : "SIP amount modify request. $fundName ki monthly limit update karke ₹${amount.toStringAsFixed(0)} karne ka setup chal raha hai.";
         triggerTool = "manage_sip";
         toolArgs = {'action': 'update', 'fund_name': fundName, 'amount': amount};
-        agentFinalText = "SIP modified successfully! ✅ $fundName ki monthly investment ab ₹${amount.toStringAsFixed(0)} hai.";
+        agentFinalText = isHi 
+            ? "एसआईपी सफलतापूर्वक संशोधित की गई! ✅ $fundName का मासिक निवेश अब ₹${amount.toStringAsFixed(0)} है।" 
+            : "SIP modified successfully! ✅ $fundName ki monthly investment ab ₹${amount.toStringAsFixed(0)} hai.";
       } else if (matchCancelSip != null) {
         final fundName = matchCancelSip.group(1)!.trim();
-        agentInitialText = "SIP cancellation initialization. $fundName standard auto-debit payments cancel karne ka request process ho raha hai.";
+        agentInitialText = isHi 
+            ? "एसआईपी रद्दीकरण की प्रक्रिया। $fundName के मानक ऑटो-डेबिट भुगतानों को रद्द करने का अनुरोध संसाधित किया जा रहा है।" 
+            : "SIP cancellation initialization. $fundName standard auto-debit payments cancel karne ka request process ho raha hai.";
         triggerTool = "manage_sip";
         toolArgs = {'action': 'cancel', 'fund_name': fundName};
-        agentFinalText = "SIP cancelled! ❌ $fundName investments close kar di gayi hain.";
+        agentFinalText = isHi 
+            ? "एसआईपी रद्द कर दी गई! ❌ $fundName निवेश बंद कर दिए गए हैं।" 
+            : "SIP cancelled! ❌ $fundName investments close kar di gayi hain.";
       } else if (matchOpenFd != null) {
         final amount = double.parse(matchOpenFd.group(1)!);
         if (profile.balance < amount) {
-          agentInitialText = "Checking balance for FD request...";
-          agentFinalText = "Oops! Fixed Deposit open karne ke liye ₹${amount.toStringAsFixed(0)} balance insufficient hai.";
+          agentInitialText = isHi ? "एफडी अनुरोध के लिए शेष राशि की जांच की जा रही है..." : "Checking balance for FD request...";
+          agentFinalText = isHi 
+              ? "ओह! सावधि जमा (एफडी) खोलने के लिए ₹${amount.toStringAsFixed(0)} की शेष राशि अपर्याप्त है।" 
+              : "Oops! Fixed Deposit open karne ke liye ₹${amount.toStringAsFixed(0)} balance insufficient hai.";
         } else {
-          agentInitialText = "Savings surplus review. ₹${amount.toStringAsFixed(0)} se secure Fixed Deposit initialize kar raha hun at 7.2% secure interest rate.";
+          agentInitialText = isHi 
+              ? "बचत अधिशेष की समीक्षा। मैं 7.2% सुरक्षित ब्याज दर पर ₹${amount.toStringAsFixed(0)} से सुरक्षित सावधि जमा (एफडी) शुरू कर रहा हूँ।" 
+              : "Savings surplus review. ₹${amount.toStringAsFixed(0)} se secure Fixed Deposit initialize kar raha hun at 7.2% secure interest rate.";
           triggerTool = "manage_fd";
           toolArgs = {'action': 'open', 'amount': amount, 'title': 'Standard FD'};
-          agentFinalText = "Fixed Deposit open ho chuka hai! ✅ ₹${amount.toStringAsFixed(0)} lock kar diye gaye hain. interest rate: 7.20% p.a.";
+          agentFinalText = isHi 
+              ? "सावधि जमा (एफडी) खुल चुकी है! ✅ ₹${amount.toStringAsFixed(0)} सुरक्षित कर दिए गए हैं। ब्याज दर: 7.20% प्रति वर्ष।" 
+              : "Fixed Deposit open ho chuka hai! ✅ ₹${amount.toStringAsFixed(0)} lock kar diye gaye hain. interest rate: 7.20% p.a.";
         }
       } else if (matchCloseFd != null) {
         final title = matchCloseFd.group(1)!.trim();
-        agentInitialText = "Fixed Deposit closure request. $title ka mature closure initialize kar raha hun.";
+        agentInitialText = isHi 
+            ? "सावधि जमा बंद करने का अनुरोध। मैं $title को समय से पूर्व बंद करने की प्रक्रिया शुरू कर रहा हूँ।" 
+            : "Fixed Deposit closure request. $title ka mature closure initialize kar raha hun.";
         triggerTool = "manage_fd";
         toolArgs = {'action': 'close', 'title': title};
-        agentFinalText = "Fixed Deposit close ho gaya! Principal amount savings balance mein add ho chuka hai.";
+        agentFinalText = isHi 
+            ? "सावधि जमा बंद कर दी गई है! मूल राशि बचत खाते की शेष राशि में जोड़ दी गई है।" 
+            : "Fixed Deposit close ho gaya! Principal amount savings balance mein add ho chuka hai.";
       } else if (matchPrepayLoan != null) {
         final amount = double.parse(matchPrepayLoan.group(1)!);
         if (profile.balance < amount) {
-          agentInitialText = "Loan prepayment balance verification...";
-          agentFinalText = "Outstanding prepayment ke liye ₹${amount.toStringAsFixed(0)} sufficient balance nahi hai.";
+          agentInitialText = isHi ? "ऋण पूर्व भुगतान शेष राशि का सत्यापन..." : "Loan prepayment balance verification...";
+          agentFinalText = isHi 
+              ? "पूर्व भुगतान के लिए ₹${amount.toStringAsFixed(0)} की पर्याप्त शेष राशि उपलब्ध नहीं है।" 
+              : "Outstanding prepayment ke liye ₹${amount.toStringAsFixed(0)} sufficient balance nahi hai.";
         } else {
-          agentInitialText = "Loan prepayment procedure start. ₹${amount.toStringAsFixed(0)} amount deduct karke outstanding balance reduce kar raha hun.";
+          agentInitialText = isHi 
+              ? "ऋण पूर्व भुगतान प्रक्रिया शुरू। मैं ₹${amount.toStringAsFixed(0)} काटकर बकाया शेष राशि को कम कर रहा हूँ।" 
+              : "Loan prepayment procedure start. ₹${amount.toStringAsFixed(0)} amount deduct karke outstanding balance reduce kar raha hun.";
           triggerTool = "manage_loan";
           toolArgs = {'action': 'prepay', 'loan_id': 'loan_01', 'amount': amount};
-          agentFinalText = "Prepayment complete! Home Loan outstanding balance is reduced by ₹${amount.toStringAsFixed(0)}. ₹1.2L projected interest saved.";
+          agentFinalText = isHi 
+              ? "पूर्व भुगतान पूरा हुआ! गृह ऋण का बकाया ₹${amount.toStringAsFixed(0)} कम हो गया है। ₹1.2 लाख संभावित ब्याज की बचत हुई।" 
+              : "Prepayment complete! Home Loan outstanding balance is reduced by ₹${amount.toStringAsFixed(0)}. ₹1.2L projected interest saved.";
         }
       } else if (matchPayEmi != null) {
         final amount = matchPayEmi.group(1) != null ? double.parse(matchPayEmi.group(1)!) : 28500.0;
         if (profile.balance < amount) {
-          agentInitialText = "EMI automated debit check...";
-          agentFinalText = "Monthly EMI payment ke liye ₹${amount.toStringAsFixed(0)} available nahi hai.";
+          agentInitialText = isHi ? "ईएमआई स्वचालित डेबिट जांच..." : "EMI automated debit check...";
+          agentFinalText = isHi 
+              ? "मासिक ईएमआई भुगतान के लिए ₹${amount.toStringAsFixed(0)} की राशि उपलब्ध नहीं है।" 
+              : "Monthly EMI payment ke liye ₹${amount.toStringAsFixed(0)} available nahi hai.";
         } else {
-          agentInitialText = "EMI Auto-Debit processing. Paying installment of ₹${amount.toStringAsFixed(0)}.";
+          agentInitialText = isHi 
+              ? "ईएमआई ऑटो-डेबिट प्रोसेसिंग। ₹${amount.toStringAsFixed(0)} की किश्त का भुगतान किया जा रहा है।" 
+              : "EMI Auto-Debit processing. Paying installment of ₹${amount.toStringAsFixed(0)}.";
           triggerTool = "manage_loan";
           toolArgs = {'action': 'pay_emi', 'loan_id': 'loan_01', 'amount': amount};
-          agentFinalText = "EMI payment successful! ✅ ₹${amount.toStringAsFixed(0)} paid towards your Home Loan.";
+          agentFinalText = isHi 
+              ? "ईएमआई का भुगतान सफल रहा! ✅ आपके गृह ऋण के लिए ₹${amount.toStringAsFixed(0)} का भुगतान किया गया है।" 
+              : "EMI payment successful! ✅ ₹${amount.toStringAsFixed(0)} paid towards your Home Loan.";
         }
       } else if (matchSetBudget != null) {
         final limit = double.parse(matchSetBudget.group(1)!);
-        agentInitialText = "Wallet monthly limit reconfiguration processing...";
+        agentInitialText = isHi ? "वॉलेट मासिक सीमा पुनर्गठन प्रसंस्करण..." : "Wallet monthly limit reconfiguration processing...";
         triggerTool = "manage_budget";
         toolArgs = {'action': 'set_limit', 'limit': limit};
-        agentFinalText = "Overall budget limit updated to ₹${limit.toStringAsFixed(0)} successfully!";
+        agentFinalText = isHi 
+            ? "कुल बजट सीमा सफलतापूर्वक ₹${limit.toStringAsFixed(0)} में अपडेट कर दी गई है!" 
+            : "Overall budget limit updated to ₹${limit.toStringAsFixed(0)} successfully!";
       } else if (matchSetCategoryBudget != null) {
         final category = matchSetCategoryBudget.group(1)!.trim();
         final limit = double.parse(matchSetCategoryBudget.group(2)!);
-        agentInitialText = "$category sub-limit category threshold update initialize...";
+        agentInitialText = isHi 
+            ? "$category उप-सीमा श्रेणी सीमा अपडेट शुरू किया जा रहा है..." 
+            : "$category sub-limit category threshold update initialize...";
         triggerTool = "manage_budget";
         toolArgs = {'action': 'set_category_limit', 'category': category, 'limit': limit};
-        agentFinalText = "$category limit set to ₹${limit.toStringAsFixed(0)}. Spending analyzer active.";
+        agentFinalText = isHi 
+            ? "$category की सीमा ₹${limit.toStringAsFixed(0)} निर्धारित की गई है। व्यय विश्लेषक सक्रिय है।" 
+            : "$category limit set to ₹${limit.toStringAsFixed(0)}. Spending analyzer active.";
       } else if (query.contains('send') || query.contains('bhej') || query.contains('transfer') || query.contains('pay')) {
         double amount = 2000;
         String recipient = "Mom";
@@ -792,24 +905,38 @@ BEHAVIOR RULES:
         }
 
         if (profile.balance < amount) {
-          agentInitialText = "Checking account balance for ₹${amount.toStringAsFixed(0)} transfer to $recipient...";
-          agentFinalText = "Oops! Aapka balance ₹${profile.balance.toStringAsFixed(2)} insufficient hai. Transfer execute nahi kiya ja sakta.";
+          agentInitialText = isHi 
+              ? "$recipient को ₹${amount.toStringAsFixed(0)} भेजने के लिए खाते की शेष राशि की जांच की जा रही है..." 
+              : "Checking account balance for ₹${amount.toStringAsFixed(0)} transfer to $recipient...";
+          agentFinalText = isHi 
+              ? "ओह! आपका शेष ₹${profile.balance.toStringAsFixed(2)} अपर्याप्त है। स्थानांतरण निष्पादित नहीं किया जा सकता।" 
+              : "Oops! Aapka balance ₹${profile.balance.toStringAsFixed(2)} insufficient hai. Transfer execute nahi kiya ja sakta.";
         } else {
-          agentInitialText = "Theek hai! ₹${amount.toStringAsFixed(0)} $recipient ko send karne ka request process kar raha hun.";
+          agentInitialText = isHi 
+              ? "ठीक है! $recipient को ₹${amount.toStringAsFixed(0)} भेजने का अनुरोध संसाधित किया जा रहा है।" 
+              : "Theek hai! ₹${amount.toStringAsFixed(0)} $recipient ko send karne ka request process kar raha hun.";
           triggerTool = "transfer_money";
           toolArgs = {'recipient': recipient, 'amount': amount, 'reason': 'Direct Pay from AI Chat'};
           
           final updatedBalance = profile.balance - amount;
-          agentFinalText = "Transfer complete! ✅ ₹${amount.toStringAsFixed(0)} successfully transferred to $recipient. Your updated balance is ₹${updatedBalance.toStringAsFixed(2)}.";
+          agentFinalText = isHi 
+              ? "स्थानांतरण पूरा हुआ! ✅ $recipient को ₹${amount.toStringAsFixed(0)} सफलतापूर्वक स्थानांतरित कर दिए गए हैं। आपका अपडेटेड बैलेंस ₹${updatedBalance.toStringAsFixed(2)} है।" 
+              : "Transfer complete! ✅ ₹${amount.toStringAsFixed(0)} successfully transferred to $recipient. Your updated balance is ₹${updatedBalance.toStringAsFixed(2)}.";
         }
       } else if (query.contains('balance') || query.contains('paisa') || query.contains('khata')) {
-        agentInitialText = "Account profile checking in progress...";
-        agentFinalText = "Aapka savings account balance ₹${profile.balance.toStringAsFixed(2)} hai. Status: Safe zone.";
+        agentInitialText = isHi ? "खाता प्रोफ़ाइल जांच प्रगति पर है..." : "Account profile checking in progress...";
+        agentFinalText = isHi 
+            ? "आपके बचत खाते का शेष ₹${profile.balance.toStringAsFixed(2)} है। स्थिति: सुरक्षित क्षेत्र।" 
+            : "Aapka savings account balance ₹${profile.balance.toStringAsFixed(2)} hai. Status: Safe zone.";
       } else if (query.contains('health') || query.contains('spending') || query.contains('story')) {
-        agentInitialText = "Analyzing financial statement records and streaks...";
-        agentFinalText = "Aapka Financial Health score: 82/100 (Safe). Detected anomaly: June MF SIP was missed. Suggestion: Tap 'Products' or type 'Resume SIP' to restore your SIP and secure active coins.";
+        agentInitialText = isHi ? "वित्तीय विवरण रिकॉर्ड और लकीरों का विश्लेषण..." : "Analyzing financial statement records and streaks...";
+        agentFinalText = isHi 
+            ? "आपका वित्तीय स्वास्थ्य स्कोर: 82/100 (सुरक्षित)। विसंगति का पता चला: जून एमएफ एसआईपी छूट गई थी। सुझाव: एसआईपी को पुनर्स्थापित करने और सक्रिय सिक्कों को सुरक्षित करने के लिए 'उत्पाद' पर टैप करें या 'Resume SIP' टाइप करें।" 
+            : "Aapka Financial Health score: 82/100 (Safe). Detected anomaly: June MF SIP was missed. Suggestion: Tap 'Products' or type 'Resume SIP' to restore your SIP and secure active coins.";
       } else {
-        agentInitialText = "Main aapka check balance details provide kar sakta hun, Fixed Deposit start kar sakta hun, Goal boost ya direct money transfer execute kar sakta hun. Kaise help karu?";
+        agentInitialText = isHi 
+            ? "मैं आपका बैलेंस विवरण प्रदान कर सकता हूँ, सावधि जमा (एफडी) शुरू कर सकता हूँ, लक्ष्य को बढ़ावा दे सकता हूँ या सीधे पैसे स्थानांतरित कर सकता हूँ। मैं आपकी सहायता कैसे करूँ?" 
+            : "Main aapka check balance details provide kar sakta hun, Fixed Deposit start kar sakta hun, Goal boost ya direct money transfer execute kar sakta hun. Kaise help karu?";
       }
     }
 
@@ -823,21 +950,9 @@ BEHAVIOR RULES:
     // Phase 2: Execute simulated tool calling sequence
     if (triggerTool != null) {
       await Future.delayed(const Duration(milliseconds: 600));
-      final toolCallId = 'sim_call_${DateTime.now().millisecondsSinceEpoch}';
-      final completer = Completer<bool>();
-      _pendingConfirmations[toolCallId] = completer;
-
-      _addMessageToUI(
-        'system',
-        "Agent wants to execute tool (simulated): $triggerTool",
-        toolCall: {'name': triggerTool, 'args': toolArgs},
-        toolStatus: 'pending',
-        toolCallId: toolCallId,
-      );
-
-      final approved = await completer.future;
-
-      if (approved) {
+      
+      if (triggerTool == 'start_kyc' || triggerTool == 'activate_upi' || triggerTool == 'update_profile_info') {
+        // Auto-approve onboarding tools to prevent getting stuck
         final output = await _executeTool(triggerTool, toolArgs);
         if (output['status'] == 'failed' || output['status'] == 'error') {
           final reason = output['reason'] ?? 'Tool call failed';
@@ -854,11 +969,45 @@ BEHAVIOR RULES:
           _ref.read(voiceServiceProvider).speak(agentFinalText);
         }
       } else {
-        _addMessageToUI('tool', "Agent tool execution for $triggerTool was cancelled by user ❌", toolCall: {'output': {'status': 'failed'}});
-        const cancelReply = "Theek hai, main target transaction cancel kar raha hun. Budget or investments modify nahi kiye gaye hain. Aur kuch help chahiye?";
-        agentState.setLastAgentMessage(cancelReply);
-        _addMessageToUI('agent', cancelReply);
-        _ref.read(voiceServiceProvider).speak(cancelReply);
+        final toolCallId = 'sim_call_${DateTime.now().millisecondsSinceEpoch}';
+        final completer = Completer<bool>();
+        _pendingConfirmations[toolCallId] = completer;
+
+        _addMessageToUI(
+          'system',
+          "Agent wants to execute tool (simulated): $triggerTool",
+          toolCall: {'name': triggerTool, 'args': toolArgs},
+          toolStatus: 'pending',
+          toolCallId: toolCallId,
+        );
+
+        final approved = await completer.future;
+
+        if (approved) {
+          final output = await _executeTool(triggerTool, toolArgs);
+          if (output['status'] == 'failed' || output['status'] == 'error') {
+            final reason = output['reason'] ?? 'Tool call failed';
+            _addMessageToUI('tool', "Agent tool $triggerTool failed ❌: $reason", toolCall: {'output': output});
+          } else {
+            _addMessageToUI('tool', "Agent completed $triggerTool ✅", toolCall: {'output': output});
+          }
+
+          // Phase 3: Output final response reflecting the updated state
+          if (agentFinalText.isNotEmpty) {
+            await Future.delayed(const Duration(milliseconds: 600));
+            agentState.setLastAgentMessage(agentFinalText);
+            _addMessageToUI('agent', agentFinalText);
+            _ref.read(voiceServiceProvider).speak(agentFinalText);
+          }
+        } else {
+          _addMessageToUI('tool', "Agent tool execution for $triggerTool was cancelled by user ❌", toolCall: {'output': {'status': 'failed'}});
+          final cancelReply = isHi 
+              ? "ठीक है, मैं लक्षित लेनदेन रद्द कर रहा हूँ। बजट या निवेश में कोई संशोधन नहीं किया गया है। क्या आपको कुछ और मदद चाहिए?" 
+              : "Theek hai, main target transaction cancel kar raha hun. Budget or investments modify nahi kiye gaye hain. Aur kuch help chahiye?";
+          agentState.setLastAgentMessage(cancelReply);
+          _addMessageToUI('agent', cancelReply);
+          _ref.read(voiceServiceProvider).speak(cancelReply);
+        }
       }
     } else {
       // Direct reply without tool execution

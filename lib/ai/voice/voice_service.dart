@@ -5,6 +5,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:sbiv2/ai/voice/voice_state.dart';
 import 'package:sbiv2/ai/engine/ai_coordinator.dart';
 import 'package:sbiv2/ai/agent/agent_state.dart';
+import 'package:sbiv2/data/repositories/state_providers.dart';
 
 /// [VoiceService] owns the microphone (STT) and the speaker (TTS).
 ///
@@ -105,6 +106,9 @@ class VoiceService {
 
     voiceNotifier.setStatus(VoiceStatus.listening);
 
+    final lang = _ref.read(appLanguageProvider);
+    final locale = lang == 'hi' ? 'hi_IN' : 'en_IN';
+
     try {
       await _stt.listen(
         onResult: (result) {
@@ -116,7 +120,7 @@ class VoiceService {
           }
         },
         pauseFor: const Duration(seconds: 3),
-        localeId: 'en_IN',
+        localeId: locale,
         listenOptions: stt.SpeechListenOptions(
           listenMode: stt.ListenMode.confirmation,
           cancelOnError: true,
@@ -161,6 +165,9 @@ class VoiceService {
     _ref.read(voiceStateProvider.notifier).setPaused(false);
     _ref.read(agentStateProvider.notifier).setSpeaking(true);
 
+    final lang = _ref.read(appLanguageProvider);
+    await _tts.setLanguage(lang == 'hi' ? 'hi-IN' : 'en-IN');
+
     await _tts.speak(text);
   }
 
@@ -194,6 +201,15 @@ class VoiceService {
     _ref.read(voiceStateProvider.notifier).setStatus(VoiceStatus.idle);
     _ref.read(voiceStateProvider.notifier).setPaused(false);
     _ref.read(agentStateProvider.notifier).setSpeaking(false);
+
+    final handsFree = _ref.read(handsFreeVoiceProvider);
+    if (handsFree) {
+      Future.delayed(const Duration(milliseconds: 600), () {
+        if (_ref.read(voiceStateProvider).status == VoiceStatus.idle) {
+          startListening();
+        }
+      });
+    }
   }
 
   /// Stops TTS immediately. Used when the user presses the stop/cancel button.
@@ -206,9 +222,21 @@ class VoiceService {
 
   // ─── Coordinator bridge ───────────────────────────────────────────────────
 
+  void Function(String)? _customTextCallback;
+
+  void setCustomCallback(void Function(String)? callback) {
+    _customTextCallback = callback;
+  }
+
   void _dispatchToAgent(String text) {
     _ref.read(voiceStateProvider.notifier).setStatus(VoiceStatus.processing);
-    _ref.read(aiCoordinatorProvider.notifier).sendMessage(text);
+    if (_customTextCallback != null) {
+      final cb = _customTextCallback!;
+      _customTextCallback = null; // Clear to avoid leakage
+      cb(text);
+    } else {
+      _ref.read(aiCoordinatorProvider.notifier).sendMessage(text);
+    }
   }
 
   // ─── Teardown ─────────────────────────────────────────────────────────────

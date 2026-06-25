@@ -18,6 +18,8 @@ const String kFDBox = 'fd_box';
 const String kSipBox = 'sip_box';
 const String kLoanBox = 'loan_box';
 const String kBudgetBox = 'budget_box';
+const String kOnboardingChatBox = 'onboarding_chat_box';
+const String kBankingChatBox = 'banking_chat_box';
 
 // Initializer function for Hive
 Future<void> initHive() async {
@@ -35,6 +37,8 @@ Future<void> initHive() async {
   await Hive.openBox(kSipBox);
   await Hive.openBox(kLoanBox);
   await Hive.openBox(kBudgetBox);
+  await Hive.openBox(kOnboardingChatBox);
+  await Hive.openBox(kBankingChatBox);
 }
 
 // Profile Type: 'A' (Rohan, new) or 'B' (Sourabh, existing)
@@ -52,7 +56,38 @@ class ProfileTypeNotifier extends StateNotifier<String> {
     state = type;
     Hive.box(kSystemBox).put('active_profile', type);
   }
+
+  void reset() {
+    state = 'B';
+    Hive.box(kSystemBox).put('active_profile', 'B');
+  }
 }
+
+// Language Provider: 'en' (English) or 'hi' (Hindi)
+final appLanguageProvider = StateNotifierProvider<AppLanguageNotifier, String>((ref) {
+  return AppLanguageNotifier();
+});
+
+class AppLanguageNotifier extends StateNotifier<String> {
+  AppLanguageNotifier() : super('en') {
+    final box = Hive.box(kSystemBox);
+    state = box.get('app_language', defaultValue: 'en');
+  }
+
+  void setLanguage(String lang) {
+    state = lang;
+    Hive.box(kSystemBox).put('app_language', lang);
+  }
+
+  void reset() {
+    state = 'en';
+    Hive.box(kSystemBox).put('app_language', 'en');
+  }
+}
+
+// Hands-free Voice Provider
+final handsFreeVoiceProvider = StateProvider<bool>((ref) => false);
+
 
 // Track PIN login status for the existing customer (Sourabh)
 final isLoggedInProvider = StateProvider<bool>((ref) => false);
@@ -406,6 +441,15 @@ class EngagementNotifier extends StateNotifier<EngagementState> {
     saveEngagement();
   }
 
+  void takeQuiz(bool isCorrect) {
+    state = state.copyWith(
+      sbiCoins: state.sbiCoins + (isCorrect ? 50 : 10),
+      lastQuizTakenTimestamp: DateTime.now().millisecondsSinceEpoch,
+      quizStreak: isCorrect ? state.quizStreak + 1 : 0,
+    );
+    saveEngagement();
+  }
+
   void addAchievement(String achievement) {
     if (!state.achievements.contains(achievement)) {
       state = state.copyWith(achievements: [...state.achievements, achievement]);
@@ -454,6 +498,28 @@ class ChatMessage {
       toolCallId: toolCallId ?? this.toolCallId,
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'sender': sender,
+      'text': text,
+      'timestamp': timestamp.toIso8601String(),
+      'toolCall': toolCall,
+      'toolStatus': toolStatus,
+      'toolCallId': toolCallId,
+    };
+  }
+
+  factory ChatMessage.fromJson(Map<String, dynamic> json) {
+    return ChatMessage(
+      sender: json['sender'] as String,
+      text: json['text'] as String,
+      timestamp: DateTime.parse(json['timestamp'] as String),
+      toolCall: json['toolCall'] != null ? Map<String, dynamic>.from(json['toolCall'] as Map) : null,
+      toolStatus: json['toolStatus'] as String?,
+      toolCallId: json['toolCallId'] as String?,
+    );
+  }
 }
 
 // Onboarding Chat Messages Notifier
@@ -470,11 +536,30 @@ class ChatMessagesNotifier extends StateNotifier<List<ChatMessage>> {
   final bool isOnboarding;
 
   ChatMessagesNotifier({required this.isOnboarding}) : super([]) {
-    reset();
+    _loadMessages();
+  }
+
+  void _loadMessages() {
+    final boxName = isOnboarding ? kOnboardingChatBox : kBankingChatBox;
+    final box = Hive.box(boxName);
+    final cached = box.get('messages');
+    if (cached != null) {
+      final list = List<dynamic>.from(cached);
+      state = list.map((e) => ChatMessage.fromJson(Map<String, dynamic>.from(e))).toList();
+    } else {
+      reset();
+    }
+  }
+
+  void _saveMessages() {
+    final boxName = isOnboarding ? kOnboardingChatBox : kBankingChatBox;
+    final box = Hive.box(boxName);
+    box.put('messages', state.map((e) => e.toJson()).toList());
   }
 
   void addMessage(ChatMessage message) {
     state = [...state, message];
+    _saveMessages();
   }
 
   void updateMessageStatus(String toolCallId, String status) {
@@ -484,6 +569,13 @@ class ChatMessagesNotifier extends StateNotifier<List<ChatMessage>> {
       }
       return msg;
     }).toList();
+    _saveMessages();
+  }
+
+  void clearChat() {
+    final boxName = isOnboarding ? kOnboardingChatBox : kBankingChatBox;
+    Hive.box(boxName).clear();
+    reset();
   }
 
   void reset() {
@@ -504,6 +596,7 @@ class ChatMessagesNotifier extends StateNotifier<List<ChatMessage>> {
         ),
       ];
     }
+    _saveMessages();
   }
 }
 
@@ -545,6 +638,10 @@ class TimelineNotifier extends StateNotifier<List<TimelineEntry>> {
   void clear() {
     state = [];
     Hive.box(kTimelineBox).delete('entries_$profileType');
+  }
+
+  void reset() {
+    clear();
   }
 
   void _save() {
@@ -626,6 +723,16 @@ class AiModelConfigNotifier extends StateNotifier<AiModelConfig> {
     final box = Hive.box(kSystemBox);
     if (liveModel != null) box.put('ai_live_model', liveModel);
     if (restModel != null) box.put('ai_rest_model', restModel);
+  }
+
+  void reset() {
+    state = const AiModelConfig(
+      liveModel: 'models/gemini-3.1-flash-live-preview',
+      restModel: 'gemini-2.0-flash',
+    );
+    final box = Hive.box(kSystemBox);
+    box.put('ai_live_model', state.liveModel);
+    box.put('ai_rest_model', state.restModel);
   }
 }
 
